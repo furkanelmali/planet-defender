@@ -707,6 +707,12 @@ namespace PlanetDefender
             for (int i = 0; i < drones.Count; i++) drones[i].angle = i * Mathf.PI * 2f / Mathf.Max(1, drones.Count);
         }
 
+        // Cover/screenshot staging: clear hit flashes so a frozen frame never shows a white-hot meteor.
+        public void DebugCalm()
+        {
+            foreach (var m in meteors) { m.flash = 0; m.visual.DOKill(true); m.visual.localScale = Vector3.one; m.Apply(); }
+        }
+
         public void DebugSpawn(string type, Vector2 position) => SpawnMeteor(config.Meteor(type), position, null);
         public void DebugSpawnGold(Vector2 position)
         {

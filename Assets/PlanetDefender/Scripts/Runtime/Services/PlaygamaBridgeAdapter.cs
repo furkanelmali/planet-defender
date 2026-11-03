@@ -43,7 +43,7 @@ namespace PlanetDefender
             Bridge.platform.audioStateChanged += enabled => { PlatformAudioEnabled = enabled; ApplyAudio(); AudioStateChanged?.Invoke(); };
             Bridge.platform.pauseStateChanged += paused => SetPlatformPause(paused);
 #else
-            Language = Application.systemLanguage == SystemLanguage.Turkish ? "tr" : "en";
+            Language = "en";   // non-web builds have no platform language; never read the OS (Playgama 3.4.2)
 #endif
             ApplyAudio();
         }

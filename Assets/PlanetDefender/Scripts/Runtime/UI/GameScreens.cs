@@ -218,6 +218,7 @@ namespace PlanetDefender
             if (!hint.gameObject.activeSelf) return;
             hintTween?.Kill();
             var cg = hint.GetComponent<CanvasGroup>();
+            DOTween.Kill(cg, true);
             hint.DOKill(true);
             hintTween = DOTween.Sequence().SetUpdate(true)
                 .Append(hint.DOAnchorPosY(hint.anchoredPosition.y - 20, 0.2f))

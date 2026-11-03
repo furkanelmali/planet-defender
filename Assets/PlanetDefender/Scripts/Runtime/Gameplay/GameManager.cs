@@ -65,8 +65,9 @@ namespace PlanetDefender
             PlaygamaBridgeAdapter.Initialize();
             yield return SaveService.Load();
             var save = SaveService.Data;
-            // English unless the player picked another language (flag button); the platform language is not forced.
-            Loc.SetLanguage(string.IsNullOrEmpty(save.settings.language) ? "en" : save.settings.language);
+            // Playgama 3.4.2: the player's own pick (flag button) wins; otherwise start in bridge.platform.language when the
+            // game supports it; Loc falls back to English for anything else.
+            Loc.SetLanguage(string.IsNullOrEmpty(save.settings.language) ? PlaygamaBridgeAdapter.Language : save.settings.language);
             AudioService.Create(assets.audio);
             UI.Rebuild();
             Loc.Changed += UI.Rebuild;
@@ -117,7 +118,8 @@ namespace PlanetDefender
                 if (levelUpQueued && State == GameState.Running) { levelUpQueued = false; BeginLevelUp(); }
                 else if (Run != null && Run.elapsed > 200f) AudioService.Instance?.PlayMusic(Music.Pressure, 2f);
             }
-            if (Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.P))
+            // P only: Esc belongs to the browser (leaves full screen), Playgama 1.5.2.
+            if (Input.GetKeyDown(KeyCode.P))
             {
                 if (State == GameState.Running && !countingDown) Pause();
                 else if (State == GameState.Paused && !UI.Settings.Visible) Resume();

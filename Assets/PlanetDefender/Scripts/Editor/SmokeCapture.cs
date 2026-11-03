@@ -22,6 +22,7 @@ namespace PlanetDefender.EditorTools
         static GameManager game;
         static string dir;
         static int savedBank;
+        static readonly Dictionary<string, Vector2> menuHomes = new Dictionary<string, Vector2>();
 
         // Pending contact sheet: one capture per size, a little wall time between sizes so layout settles.
         static string sheetName;
@@ -125,6 +126,32 @@ namespace PlanetDefender.EditorTools
             ExecuteEvents.Execute(button.gameObject, data, ExecuteEvents.pointerClickHandler);
         }
 
+        static Transform MenuColumn() => game.UI.Menu.root.Find("Column");
+
+        static void Press(Transform target)
+        {
+            var data = new PointerEventData(EventSystem.current) { button = PointerEventData.InputButton.Left };
+            ExecuteEvents.Execute(target.gameObject, data, ExecuteEvents.pointerDownHandler);
+            ExecuteEvents.Execute(target.gameObject, data, ExecuteEvents.pointerUpHandler);
+        }
+
+        // A touch released while the level-up screen opens sends PointerExit to the button under the finger; that used to
+        // kill Skip's entrance halfway, and each time Skip settled lower until it left the screen.
+        static void LiftFingerOver(UnityEngine.UI.Button button)
+        {
+            var data = new PointerEventData(EventSystem.current) { pointerId = 0 };
+            ExecuteEvents.Execute(button.gameObject, data, ExecuteEvents.pointerExitHandler);
+            Debug.Log($"PD_DEBUG finger lifted over Skip at {((RectTransform)button.transform).anchoredPosition}");
+        }
+
+        static void CheckSkipShown()
+        {
+            var skip = (RectTransform)game.UI.LevelUp.SkipButton.transform;
+            var cg = skip.GetComponent<CanvasGroup>();
+            Debug.Log($"PD_DEBUG skip at {skip.anchoredPosition} alpha {(cg ? cg.alpha : -1):0.00} scale {skip.localScale.x:0.00}");
+            Check((skip.anchoredPosition - new Vector2(0, 36)).sqrMagnitude < 0.01f && cg != null && cg.alpha > 0.99f, "Skip is on screen at its layout position");
+        }
+
         static void Step()
         {
             var run = game != null ? game.Run : null;
@@ -145,7 +172,9 @@ namespace PlanetDefender.EditorTools
                     var rapid = game.Config.Upgrade("rapid_fire");
                     Check(game.Config.UpgradePrice(rapid, 0) == 40 && game.Config.UpgradePrice(rapid, 1) == 66, "upgrade price growth ceil(p*1.65^tier)");
                     step++; Wait(3.0); return;
-                case 1: Sheet("01_menu"); step++; return;
+                case 1:
+                    foreach (RectTransform c in MenuColumn()) menuHomes[c.name] = c.anchoredPosition;
+                    Sheet("01_menu"); step++; return;
                 case 2: game.OpenSettings(); step++; Wait(1.5); return;
                 case 3: Sheet("02_settings"); step++; return;
                 case 4: game.UI.Settings.Hide(true); game.OpenLanguage(); step++; Wait(1.5); return;
@@ -188,11 +217,13 @@ namespace PlanetDefender.EditorTools
                     Check(game.State == GameState.Running, "still running before the scripted level-up (state " + game.State + ")");
                     run.score = 2400; run.sessionGold = 260;
                     run.xp = run.XpNeeded;
-                    step++; Wait(0.8); return;
+                    step++; return;
                 case 15:
+                    if (sub == 0) { if (!game.UI.LevelUp.Visible) return; LiftFingerOver(game.UI.LevelUp.SkipButton); }
                     if (game.State != GameState.LevelUp || Time.timeScale > 0f || game.Offers == null || sub++ < 6) { Wait(0.3); return; }
                     sub = 0;
                     Check(game.Offers.Count == 3, "three upgrade cards offered");
+                    CheckSkipShown();
                     Sheet("07_levelup"); step++; return;
                 case 16:
                 {
@@ -206,10 +237,12 @@ namespace PlanetDefender.EditorTools
                 case 17:
                     Check(game.State == GameState.Running && !game.UI.LevelUp.Visible, "run resumes after buying");
                     run.xp = run.XpNeeded;
-                    step++; Wait(0.8); return;
+                    step++; return;
                 case 18:
+                    if (sub == 0) { if (!game.UI.LevelUp.Visible) return; LiftFingerOver(game.UI.LevelUp.SkipButton); }
                     if (game.State != GameState.LevelUp || game.Offers == null || sub++ < 6) { Wait(0.3); return; }
                     sub = 0;
+                    CheckSkipShown();
                     Debug.Log("PD_DEBUG before skip: " + game.UI.LevelUp.DebugState + " state=" + game.State);
                     Click(game.UI.LevelUp.SkipButton);
                     Debug.Log("PD_DEBUG after skip: " + game.UI.LevelUp.DebugState + " state=" + game.State);
@@ -250,6 +283,27 @@ namespace PlanetDefender.EditorTools
                     Check(!again.applied && SaveService.Data.bankGold == savedBank + last.sessionGold, "second settlement of the same run is ignored");
                     Check(SaveService.Data.bestScore == last.score, "best score saved");
                     Sheet("09_gameover"); step++; return;
+                }
+                case 25:
+                    // Regression: leaving the menu or pressing its buttons mid-entrance used to shift them a little more
+                    // on every visit (Play ended up under the Planets/Ranking row on a phone).
+                    if (sub < 12)
+                    {
+                        if (sub % 3 == 0) game.EnterMenu();
+                        else if (sub % 3 == 1) { Press(MenuColumn().Find("Play")); Press(MenuColumn().Find("Settings")); }
+                        else game.OpenShop();
+                        sub++; Wait(0.12); return;
+                    }
+                    sub = 0;
+                    game.EnterMenu(); step++; Wait(2.5); return;
+                case 26:
+                {
+                    int moved = 0;
+                    foreach (RectTransform c in MenuColumn())
+                        if (c.gameObject.activeSelf && menuHomes.TryGetValue(c.name, out var home) && (c.anchoredPosition - home).sqrMagnitude > 0.01f)
+                        { moved++; Debug.Log($"PD_MENU_MOVED {c.name} {home} -> {c.anchoredPosition}"); }
+                    Check(moved == 0, "menu buttons return to their layout after interrupted entrances");
+                    step++; return;
                 }
                 default:
                     Debug.Log("PD_SMOKE_OK");

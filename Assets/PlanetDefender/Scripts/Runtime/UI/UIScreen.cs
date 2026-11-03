@@ -72,16 +72,20 @@ namespace PlanetDefender
         }
 
         // Entrance used across screens: rise + overshoot, staggered by delay.
+        // The sequence is keyed on the element's CanvasGroup, so button juice, idle loops or OnDisable kills on the
+        // transform can never cut it short, and the target is the element's remembered home position, never the
+        // position it happens to have now (an interrupted entrance used to become the next one's target: the menu drifted).
         protected static void In(RectTransform rt, float delay, float rise = 40f, float fromScale = 0.92f)
         {
             if (rt == null) return;
-            rt.DOKill(true);
-            var target = rt.anchoredPosition;
+            if (!rt.TryGetComponent<CanvasGroup>(out var cg)) cg = rt.gameObject.AddComponent<CanvasGroup>();
+            DOTween.Kill(cg, true);
+            if (!rt.TryGetComponent<EntranceHome>(out var home)) { home = rt.gameObject.AddComponent<EntranceHome>(); home.position = rt.anchoredPosition; }
+            var target = home.position;
             rt.anchoredPosition = target - new Vector2(0, rise);
             rt.localScale = Vector3.one * fromScale;
-            if (!rt.TryGetComponent<CanvasGroup>(out var cg)) cg = rt.gameObject.AddComponent<CanvasGroup>();
             cg.alpha = 0;
-            DOTween.Sequence().SetUpdate(true).SetTarget(rt).SetDelay(delay)
+            DOTween.Sequence().SetUpdate(true).SetTarget(cg).SetDelay(delay)
                 .Append(rt.DOAnchorPos(target, 0.42f).SetEase(Ease.OutBack, 1.4f))
                 .Join(rt.DOScale(1f, 0.42f).SetEase(Ease.OutBack, 1.6f))
                 .Join(cg.DOFade(1f, 0.2f));

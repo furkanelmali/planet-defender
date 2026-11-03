@@ -19,7 +19,7 @@
         "backfillId": ""
     },
     "saas": {
-        "publicToken": "YOUR_PLAYGAMA_SAAS_PUBLIC_TOKEN",
+        "publicToken": "cmw0raw1k01romh0h4hum0q6v",
         "leaderboards": { "platforms": ["playgama", "qa_tool"] }
     },
     "leaderboards": [
