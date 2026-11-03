@@ -1,0 +1,1153 @@
+if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+    let meta = document.createElement('meta')
+    meta.name = 'viewport'
+    meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes'
+    document.getElementsByTagName('head')[0].appendChild(meta)
+}
+
+const CANVAS = document.getElementById('canvas')
+const STORAGE_DATA_SEPARATOR = '{bridge_data_separator}'
+const STORAGE_KEYS_SEPARATOR = '{bridge_keys_separator}'
+const STORAGE_VALUES_SEPARATOR = '{bridge_values_separator}'
+
+// utils
+window.unityInstance = null
+const messageQueue = []
+let progressBarFillingInterval = null
+let progressBarCompleteFillingStarted = false
+
+function sendMessageToUnity(name, value) {
+    if (window.unityInstance !== null) {
+        window.unityInstance.SendMessage('PlaygamaBridge', name, value)
+    } else {
+        messageQueue.push({ name, value })
+    }
+}
+
+function flushMessageQueue() {
+    while (messageQueue.length > 0) {
+        const message = messageQueue.shift()
+        if (window.unityInstance !== null) {
+            window.unityInstance.SendMessage('PlaygamaBridge', message.name, message.value)
+        }
+    }
+}
+
+function onUnityLoadingProgressChanged(progress) {
+    if (progress >= 1) {
+        if (progressBarFillingInterval !== null) {
+            clearInterval(progressBarFillingInterval)
+            progressBarFillingInterval = null
+        }
+        bridge.setGameLoadingProgress(100)
+        return
+    }
+
+    if (progressBarCompleteFillingStarted) {
+        return
+    }
+
+    if (progress >= 0.9) {
+        progressBarCompleteFillingStarted = true
+        completeProgressBarFilling()
+        return
+    }
+
+    bridge.setGameLoadingProgress(progress * 100)
+}
+
+function completeProgressBarFilling() {
+    if (progressBarFillingInterval !== null) {
+        return
+    }
+
+    let currentPercent = 90
+    bridge.setGameLoadingProgress(currentPercent)
+    progressBarFillingInterval = setInterval(() => {
+        currentPercent++
+        if (currentPercent > 99) {
+            currentPercent = 99
+        }
+
+        bridge.setGameLoadingProgress(currentPercent)
+
+        if (currentPercent >= 99) {
+            clearInterval(progressBarFillingInterval)
+            progressBarFillingInterval = null
+            return
+        }
+    }, 500)
+}
+
+window.addEventListener('pointerdown', () => {
+    window.focus()
+    CANVAS.focus()
+})
+
+let bridgeScript = null
+let bridgeTimeout = null
+let bridgeLoaded = false
+
+function addLocalBridge() {
+    if (bridgeLoaded) return
+    bridgeLoaded = true
+    clearTimeout(bridgeTimeout)
+
+    if (bridgeScript && bridgeScript.parentNode) {
+        bridgeScript.onload = null
+        bridgeScript.onerror = null
+        bridgeScript.parentNode.removeChild(bridgeScript)
+    }
+
+    window.bridge = null
+    window.playgamaBridge = null
+
+    const scriptElement = document.createElement('script')
+    scriptElement.src = './playgama-bridge.js'
+    scriptElement.onload = function() {
+        initializeBridge()
+    }
+    document.body.appendChild(scriptElement)
+}
+
+bridgeScript = document.createElement('script')
+bridgeScript.src = 'https://bridge.playgama.com/v2/stable/playgama-bridge.js'
+bridgeScript.onload = initializeBridge
+bridgeScript.onerror = addLocalBridge
+
+bridgeTimeout = setTimeout(() => {
+    console.warn('CDN bridge failed to load within 2 seconds, loading local bridge')
+    addLocalBridge()
+}, 2000)
+
+document.head.appendChild(bridgeScript)
+
+function initializeBridge() {
+    clearTimeout(bridgeTimeout)
+    bridge.engine = 'unity'
+    bridge.gameVersion = '{{{ PRODUCT_VERSION }}}'
+    bridge
+        .initialize()
+        .then(() => {
+            bridge.setGameLoadingProgress(0)
+            bridge.advertisement.on('banner_state_changed', state => sendMessageToUnity('OnBannerStateChanged', state))
+            bridge.advertisement.on('interstitial_state_changed', state => sendMessageToUnity('OnInterstitialStateChanged', state))
+            bridge.advertisement.on('rewarded_state_changed', state => sendMessageToUnity('OnRewardedStateChanged', state))
+            bridge.advertisement.on('advanced_banners_state_changed', state => sendMessageToUnity('OnAdvancedBannersStateChanged', state))
+            bridge.platform.on('audio_state_changed', isEnabled => sendMessageToUnity('OnAudioStateChanged', isEnabled.toString()))
+            bridge.platform.on('pause_state_changed', isPaused => sendMessageToUnity('OnPauseStateChanged', isPaused.toString()))
+
+            if (bridge.multiplayer) {
+                subscribeMultiplayerEvents()
+            }
+
+            let unityLoader = document.createElement('script')
+            unityLoader.src = 'Build/{{{ LOADER_FILENAME }}}'
+            unityLoader.onload = () => {
+                createUnityInstance(
+                    CANVAS,
+                    {
+#if typeof PROGRESSIVE_ASSET_LOADING !== 'undefined' && PROGRESSIVE_ASSET_LOADING
+                        primaryDataUrls: {{{ JSON.stringify(PRIMARY_DATA_FILES) }}},
+                        secondaryDataUrls: {{{ JSON.stringify(SECONDARY_DATA_FILES) }}},
+#else
+                        dataUrl: 'Build/{{{ DATA_FILENAME }}}',
+#endif
+                        frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
+                        codeUrl: 'Build/{{{ CODE_FILENAME }}}',
+#if MEMORY_FILENAME
+                        memoryUrl: 'Build/{{{ MEMORY_FILENAME }}}',
+#endif
+#if SYMBOLS_FILENAME
+                        symbolsUrl: 'Build/{{{ SYMBOLS_FILENAME }}}',
+#endif
+                        streamingAssetsUrl: 'StreamingAssets',
+                        companyName: '{{{ COMPANY_NAME }}}',
+                        productName: '{{{ PRODUCT_NAME }}}',
+                        productVersion: '{{{ PRODUCT_VERSION }}}',
+                        // matchWebGLToCanvasSize: false, // Uncomment this to separately control WebGL canvas render size and DOM element size.
+                        // devicePixelRatio: 1, // Uncomment this to override low DPI rendering on high DPI displays.
+                    },
+                    onUnityLoadingProgressChanged)
+                    .then((unityInstance) => {
+                        window.unityInstance = unityInstance
+                        CANVAS.focus()
+                        flushMessageQueue()
+                    })
+                    .catch((error) => {
+                        console.error(error)
+                    })
+            }
+            document.body.appendChild(unityLoader)
+        })
+        .catch(error => console.error(error))
+}
+
+// platform
+window.getPlatformId = function() {
+    return bridge.platform.id
+}
+
+window.getPlatformLanguage = function() {
+    return bridge.platform.language
+}
+
+window.getPlatformPayload = function() {
+    let payload = bridge.platform.payload
+    if (typeof payload === 'string') {
+        return payload
+    } else {
+        return ''
+    }
+}
+
+window.getPlatformTld = function() {
+    let tld = bridge.platform.tld
+    if (typeof tld === 'string') {
+        return tld
+    } else {
+        return ''
+    }
+}
+
+window.getPlatformLaunchSource = function() {
+    let launchSource = bridge.platform.launchSource
+    if (typeof launchSource === 'string') {
+        return launchSource
+    } else {
+        return ''
+    }
+}
+
+window.getPlatformData = function() {
+    if (bridge.platform.data) {
+        return JSON.stringify(bridge.platform.data)
+    }
+
+    return ''
+}
+
+window.getIsPlatformAudioEnabled = function() {
+    return bridge.platform.isAudioEnabled.toString()
+}
+
+window.getIsPlatformExternalCallsSupported = function() {
+    return bridge.platform.isExternalCallsSupported.toString()
+}
+
+window.getIsPlatformExternalLinksAllowed = function() {
+    return bridge.platform.isExternalLinksAllowed.toString()
+}
+
+window.sendMessageToPlatform = function(message, options) {
+    if (options) {
+        options = JSON.parse(options)
+    }
+
+    bridge.platform.sendMessage(message, options)
+}
+
+window.sendCustomMessageToPlatform = function(id, options) {
+    if (options) {
+        options = JSON.parse(options)
+    }
+
+    bridge.platform.sendCustomMessage(id, options)
+}
+
+window.getServerTime = function() {
+    bridge.platform.getServerTime()
+        .then(result => {
+            sendMessageToUnity('OnGetServerTimeCompleted', result.toString())
+        })
+        .catch(error => {
+            sendMessageToUnity('OnGetServerTimeCompleted', 'false')
+        })
+}
+
+// analytics
+window.analyticsSend = function(eventName, data) {
+    if (data) {
+        data = JSON.parse(data)
+    }
+
+    bridge.analytics.send(eventName, data)
+}
+
+// cross promo
+window.crossPromoGetGamesList = function() {
+    bridge.crossPromo.getGames()
+        .then(result => {
+            sendMessageToUnity('OnCrossPromoGetGamesListCompletedSuccess', JSON.stringify(result))
+        })
+        .catch(error => {
+            sendMessageToUnity('OnCrossPromoGetGamesListCompletedFailed')
+        })
+}
+
+window.crossPromoShow = function() {
+    bridge.crossPromo.show()
+}
+
+window.crossPromoHide = function() {
+    bridge.crossPromo.hide()
+}
+
+window.getIsCrossPromoVisible = function() {
+    return bridge.crossPromo.isVisible.toString()
+}
+
+// device
+window.getDeviceType = function() {
+    return bridge.device.type
+}
+
+window.getSafeArea = function() {
+    return JSON.stringify(bridge.device.safeArea)
+}
+
+
+// player
+window.getIsPlayerAuthorizationSupported = function() {
+    return bridge.player.isAuthorizationSupported.toString()
+}
+
+window.getIsPlayerAuthorized = function() {
+    return bridge.player.isAuthorized.toString()
+}
+
+window.getIsPlayerGuest = function() {
+    return bridge.player.isGuest.toString()
+}
+
+window.getPlayerId = function() {
+    if (bridge.player.id) {
+        return bridge.player.id.toString()
+    }
+
+    return ''
+}
+
+window.getPlayerName = function() {
+    if (bridge.player.name) {
+        return bridge.player.name.toString()
+    }
+
+    return ''
+}
+
+window.getPlayerPhotos = function() {
+    if (bridge.player.photos.length > 0) {
+        return JSON.stringify(bridge.player.photos)
+    }
+
+    return ''
+}
+
+window.getPlayerExtra = function() {
+    if (bridge.player.extra) {
+        return JSON.stringify(bridge.player.extra)
+    }
+
+    return ''
+}
+
+window.authorizePlayer = function(options) {
+    if (options) {
+        options = JSON.parse(options)
+    }
+
+    bridge.player.authorize(options)
+        .then(() => {
+            sendMessageToUnity('OnAuthorizeCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnAuthorizeCompleted', 'false')
+        })
+}
+
+
+// storage
+window.getStorageData = function(key) {
+    let keys = key.split(STORAGE_KEYS_SEPARATOR)
+
+    bridge.storage.get(keys, false)
+        .then(data => {
+            if (keys.length > 1) {
+                let values = []
+
+                for (let i = 0; i < keys.length; i++) {
+                    let value = data[i]
+                    if (value) {
+                        if (typeof value !== 'string') {
+                            value = JSON.stringify(value)
+                        }
+
+                        values.push(value)
+                    } else {
+                        values.push('')
+                    }
+                }
+
+                sendMessageToUnity('OnGetStorageDataSuccess', `${key}${STORAGE_DATA_SEPARATOR}${values.join(STORAGE_VALUES_SEPARATOR)}`)
+            } else {
+                if (data[0]) {
+                    if (typeof data[0] !== 'string') {
+                        data = JSON.stringify(data[0])
+                    }
+                } else {
+                    data = ''
+                }
+
+                sendMessageToUnity('OnGetStorageDataSuccess', `${key}${STORAGE_DATA_SEPARATOR}${data}`)
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnGetStorageDataFailed', key)
+        })
+}
+
+window.setStorageData = function(key, value) {
+    let keys = key.split(STORAGE_KEYS_SEPARATOR)
+    let values = value.split(STORAGE_VALUES_SEPARATOR)
+
+    bridge.storage.set(keys, values)
+        .then(() => {
+            sendMessageToUnity('OnSetStorageDataSuccess', key)
+        })
+        .catch(error => {
+            sendMessageToUnity('OnSetStorageDataFailed', key)
+        })
+}
+
+window.deleteStorageData = function(key) {
+    let keys = key.split(STORAGE_KEYS_SEPARATOR)
+
+    bridge.storage.delete(keys)
+        .then(() => {
+            sendMessageToUnity('OnDeleteStorageDataSuccess', key)
+        })
+        .catch(error => {
+            sendMessageToUnity('OnDeleteStorageDataFailed', key)
+        })
+}
+
+
+// advertisement
+window.getInterstitialState = function() {
+    if (bridge.advertisement.interstitialState) {
+        return bridge.advertisement.interstitialState
+    } else {
+        return ''
+    }
+}
+
+window.getIsBannerSupported = function() {
+    return bridge.advertisement.isBannerSupported.toString()
+}
+
+window.getIsInterstitialSupported = function() {
+    return bridge.advertisement.isInterstitialSupported.toString()
+}
+
+window.getMinimumDelayBetweenInterstitial = function() {
+    return bridge.advertisement.minimumDelayBetweenInterstitial.toString()
+}
+
+window.setMinimumDelayBetweenInterstitial = function(options) {
+    bridge.advertisement.setMinimumDelayBetweenInterstitial(options)
+}
+
+window.getIsRewardedSupported = function() {
+    return bridge.advertisement.isRewardedSupported.toString()
+}
+
+window.getRewardedPlacement = function() {
+    if (bridge.advertisement.rewardedPlacement) {
+        return bridge.advertisement.rewardedPlacement
+    } else {
+        return ''
+    }
+}
+
+window.showBanner = function(position, placement) {
+    bridge.advertisement.showBanner(position, placement)
+}
+
+window.hideBanner = function() {
+    bridge.advertisement.hideBanner()
+}
+
+window.showInterstitial = function(placement) {
+    bridge.advertisement.showInterstitial(placement)
+}
+
+window.showRewarded = function(placement) {
+    bridge.advertisement.showRewarded(placement)
+}
+
+window.getIsAdvancedBannersSupported = function() {
+    return bridge.advertisement.isAdvancedBannersSupported.toString()
+}
+
+window.getAdvancedBannersState = function() {
+    if (bridge.advertisement.advancedBannersState) {
+        return bridge.advertisement.advancedBannersState
+    } else {
+        return ''
+    }
+}
+
+window.showAdvancedBanners = function(placement) {
+    bridge.advertisement.showAdvancedBanners(placement)
+}
+
+window.hideAdvancedBanners = function() {
+    bridge.advertisement.hideAdvancedBanners()
+}
+
+window.checkAdBlock = function() {
+    bridge.advertisement.checkAdBlock()
+        .then(result => {
+            sendMessageToUnity('OnCheckAdBlockCompleted', result.toString())
+        })
+        .catch(error => {
+            sendMessageToUnity('OnCheckAdBlockCompleted', 'false')
+        })
+}
+
+
+// social
+window.getIsShareSupported = function() {
+    return bridge.social.isShareSupported.toString()
+}
+
+window.getIsInviteFriendsSupported = function() {
+    return bridge.social.isInviteFriendsSupported.toString()
+}
+
+window.getIsJoinCommunitySupported = function() {
+    return bridge.social.isJoinCommunitySupported.toString()
+}
+
+window.getIsCreatePostSupported = function() {
+    return bridge.social.isCreatePostSupported.toString()
+}
+
+window.getIsAddToHomeScreenSupported = function() {
+    return bridge.social.isAddToHomeScreenSupported.toString()
+}
+
+window.getIsAddToHomeScreenRewardSupported = function() {
+    return bridge.social.isAddToHomeScreenRewardSupported.toString()
+}
+
+window.getIsAddToFavoritesSupported = function() {
+    return bridge.social.isAddToFavoritesSupported.toString()
+}
+
+window.getIsAddToFavoritesRewardSupported = function() {
+    return bridge.social.isAddToFavoritesRewardSupported.toString()
+}
+
+window.getIsRateSupported = function() {
+    return bridge.social.isRateSupported.toString()
+}
+
+window.getIsPostRewardSupported = function() {
+    return bridge.social.isPostRewardSupported.toString()
+}
+
+window.share = function(id) {
+    bridge.social.share(id || undefined)
+        .then(() => {
+            sendMessageToUnity('OnShareCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnShareCompleted', 'false')
+        })
+}
+
+window.inviteFriends = function(id) {
+    bridge.social.inviteFriends(id || undefined)
+        .then(() => {
+            sendMessageToUnity('OnInviteFriendsCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnInviteFriendsCompleted', 'false')
+        })
+}
+
+window.joinCommunity = function() {
+    bridge.social.joinCommunity()
+        .then(() => {
+            sendMessageToUnity('OnJoinCommunityCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnJoinCommunityCompleted', 'false')
+        })
+}
+
+window.createPost = function(id, payload) {
+    bridge.social.createPost(id || undefined, payload || undefined)
+        .then(() => {
+            sendMessageToUnity('OnCreatePostCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnCreatePostCompleted', 'false')
+        })
+}
+
+window.addToHomeScreen = function() {
+    bridge.social.addToHomeScreen()
+        .then(() => {
+            sendMessageToUnity('OnAddToHomeScreenCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnAddToHomeScreenCompleted', 'false')
+        })
+}
+
+window.addToFavorites = function() {
+    bridge.social.addToFavorites()
+        .then(() => {
+            sendMessageToUnity('OnAddToFavoritesCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnAddToFavoritesCompleted', 'false')
+        })
+}
+
+window.rate = function() {
+    bridge.social.rate()
+        .then(() => {
+            sendMessageToUnity('OnRateCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnRateCompleted', 'false')
+        })
+}
+
+window.getAddToHomeScreenReward = function() {
+    bridge.social.getAddToHomeScreenReward()
+        .then(() => {
+            sendMessageToUnity('OnGetAddToHomeScreenRewardCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnGetAddToHomeScreenRewardCompleted', 'false')
+        })
+}
+
+window.getAddToFavoritesReward = function() {
+    bridge.social.getAddToFavoritesReward()
+        .then(() => {
+            sendMessageToUnity('OnGetAddToFavoritesRewardCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnGetAddToFavoritesRewardCompleted', 'false')
+        })
+}
+
+window.getPostReward = function() {
+    bridge.social.getPostReward()
+        .then(data => {
+            sendMessageToUnity('OnGetPostRewardCompletedSuccess', data ? JSON.stringify(data) : '[]')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnGetPostRewardCompletedFailed', 'false')
+        })
+}
+
+
+// leaderboards
+window.getLeaderboardsType = function() {
+    return bridge.leaderboards.type
+}
+
+window.leaderboardsSetScore = function(id, score) {
+    score = parseInt(score)
+    bridge.leaderboards.setScore(id, score)
+        .then(() => {
+            sendMessageToUnity('OnLeaderboardsSetScoreCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnLeaderboardsSetScoreCompleted', 'false')
+        })
+}
+
+window.leaderboardsGetEntries = function(id) {
+    bridge.leaderboards.getEntries(id)
+        .then(data => {
+            if (data) {
+                sendMessageToUnity('OnLeaderboardsGetEntriesCompletedSuccess', JSON.stringify(data))
+            } else {
+                sendMessageToUnity('OnLeaderboardsGetEntriesCompletedSuccess', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnLeaderboardsGetEntriesCompletedFailed', 'false')
+        })
+}
+
+window.leaderboardsShowNativePopup = function(id) {
+    bridge.leaderboards.showNativePopup(id)
+        .then(() => {
+            sendMessageToUnity('OnLeaderboardsShowNativePopupCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnLeaderboardsShowNativePopupCompleted', 'false')
+        })
+}
+
+window.getIsPaymentsSupported = function() {
+    return bridge.payments.isSupported.toString()
+}
+
+window.paymentsPurchase = function(id, options) {
+    if (options) {
+        options = JSON.parse(options)
+    }
+
+    bridge.payments.purchase(id, options)
+        .then(data => {
+            if (data) {
+                if (typeof data !== 'string') {
+                    data = JSON.stringify(data)
+                }
+
+                sendMessageToUnity('OnPaymentsPurchaseCompleted', data)
+            } else {
+                sendMessageToUnity('OnPaymentsPurchaseCompleted', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnPaymentsPurchaseFailed', '')
+        })
+}
+
+window.paymentsConsumePurchase = function(id) {
+    bridge.payments.consumePurchase(id)
+        .then(data => {
+            if (data) {
+                if (typeof data !== 'string') {
+                    data = JSON.stringify(data)
+                }
+
+                sendMessageToUnity('OnPaymentsConsumePurchaseCompleted', data)
+            } else {
+                sendMessageToUnity('OnPaymentsConsumePurchaseCompleted', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnPaymentsConsumePurchaseFailed', '')
+        })
+}
+
+window.paymentsGetCatalog = function() {
+    bridge.payments.getCatalog()
+        .then(data => {
+            if (data) {
+                if (typeof data !== 'string') {
+                    data = JSON.stringify(data)
+                }
+
+                sendMessageToUnity('OnPaymentsGetCatalogCompletedSuccess', data)
+            } else {
+                sendMessageToUnity('OnPaymentsGetCatalogCompletedSuccess', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnPaymentsGetCatalogCompletedFailed', '')
+        })
+}
+
+window.paymentsGetPurchases = function() {
+    bridge.payments.getPurchases()
+        .then(data => {
+            if (data) {
+                if (typeof data !== 'string') {
+                    data = JSON.stringify(data)
+                }
+
+                sendMessageToUnity('OnPaymentsGetPurchasesCompletedSuccess', data)
+            } else {
+                sendMessageToUnity('OnPaymentsGetPurchasesCompletedSuccess', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnPaymentsGetPurchasesCompletedFailed', '')
+        })
+}
+
+window.getIsRemoteConfigSupported = function() {
+    return bridge.remoteConfig.isSupported.toString()
+}
+
+window.remoteConfigSetContext = function(parameters) {
+    if (parameters) {
+        parameters = JSON.parse(parameters)
+    }
+
+    bridge.remoteConfig.setContext(parameters)
+}
+
+window.remoteConfigGet = function() {
+    bridge.remoteConfig.get()
+        .then(data => {
+            if (typeof data !== 'string') {
+                data = JSON.stringify(data)
+            }
+
+            sendMessageToUnity('OnRemoteConfigGetSuccess', data)
+        })
+        .catch(error => {
+            sendMessageToUnity('OnRemoteConfigGetFailed', '')
+        })
+}
+
+window.achievementsUnlock = function(id) {
+    bridge.achievements.unlock(id)
+        .then(() => {
+            sendMessageToUnity('OnAchievementsUnlockCompleted', 'true')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnAchievementsUnlockCompleted', 'false')
+        })
+}
+
+window.achievementsGetAchievements = function() {
+    bridge.achievements.getAchievements()
+        .then(data => {
+            if (data) {
+                sendMessageToUnity('OnAchievementsGetAchievementsCompletedSuccess', JSON.stringify(data))
+            } else {
+                sendMessageToUnity('OnAchievementsGetAchievementsCompletedSuccess', '')
+            }
+        })
+        .catch(error => {
+            sendMessageToUnity('OnAchievementsGetAchievementsCompletedFailed', 'false')
+        })
+}
+
+// tasks
+window.tasksGetTasks = function() {
+    bridge.tasks.getTasks()
+        .then(data => {
+            sendMessageToUnity('OnTasksGetTasksCompletedSuccess', data ? JSON.stringify(data) : '[]')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnTasksGetTasksCompletedFailed', 'false')
+        })
+}
+
+window.tasksAddProgress = function(options) {
+    options = JSON.parse(options)
+
+    bridge.tasks.addProgress(options.metric, options.amount)
+        .then(() => {
+            sendMessageToUnity('OnTasksAddProgressCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnTasksAddProgressCompletedFailed', 'false')
+        })
+}
+
+window.tasksClaimReward = function(options) {
+    options = JSON.parse(options)
+
+    bridge.tasks.claimReward(options.id)
+        .then(claimed => {
+            sendMessageToUnity('OnTasksClaimRewardCompletedSuccess', claimed ? 'true' : 'false')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnTasksClaimRewardCompletedFailed', 'false')
+        })
+}
+
+// daily rewards
+window.dailyRewardsGetRewards = function() {
+    bridge.dailyRewards.getRewards()
+        .then(data => {
+            sendMessageToUnity('OnDailyRewardsGetRewardsCompletedSuccess', data ? JSON.stringify(data) : '[]')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnDailyRewardsGetRewardsCompletedFailed', 'false')
+        })
+}
+
+window.dailyRewardsGetCurrentDay = function() {
+    bridge.dailyRewards.getCurrentDay()
+        .then(day => {
+            sendMessageToUnity('OnDailyRewardsGetCurrentDayCompletedSuccess', day.toString())
+        })
+        .catch(error => {
+            sendMessageToUnity('OnDailyRewardsGetCurrentDayCompletedFailed', 'false')
+        })
+}
+
+window.dailyRewardsGetCurrentReward = function() {
+    bridge.dailyRewards.getCurrentReward()
+        .then(reward => {
+            sendMessageToUnity('OnDailyRewardsGetCurrentRewardCompletedSuccess', reward ? reward.toString() : '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnDailyRewardsGetCurrentRewardCompletedFailed', 'false')
+        })
+}
+
+window.dailyRewardsClaimCurrentReward = function() {
+    bridge.dailyRewards.claimCurrentReward()
+        .then(claimed => {
+            sendMessageToUnity('OnDailyRewardsClaimCurrentRewardCompletedSuccess', claimed ? 'true' : 'false')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnDailyRewardsClaimCurrentRewardCompletedFailed', 'false')
+        })
+}
+
+// notifications
+window.getIsNotificationsSupported = function() {
+    return bridge.notifications.isSupported.toString()
+}
+
+window.notificationsSchedule = function(options) {
+    options = JSON.parse(options)
+
+    bridge.notifications.schedule(options)
+        .then(() => {
+            sendMessageToUnity('OnNotificationsScheduleCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnNotificationsScheduleCompletedFailed', 'false')
+        })
+}
+
+window.notificationsCancel = function(id) {
+    bridge.notifications.cancel(id)
+        .then(() => {
+            sendMessageToUnity('OnNotificationsCancelCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnNotificationsCancelCompletedFailed', 'false')
+        })
+}
+
+window.notificationsCancelAll = function() {
+    bridge.notifications.cancelAll()
+        .then(() => {
+            sendMessageToUnity('OnNotificationsCancelAllCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnNotificationsCancelAllCompletedFailed', 'false')
+        })
+}
+
+// multiplayer
+// Unity's JsonUtility cannot parse free-form objects, so a flat object (properties, message data,
+// sync state) goes as a list of typed values and becomes Dictionary<string, object> in C#
+function toMultiplayerValueList(object) {
+    if (!object || typeof object !== 'object' || Array.isArray(object)) {
+        return []
+    }
+
+    return Object.keys(object).map(key => {
+        const value = object[key]
+        const type = typeof value === 'number' || typeof value === 'boolean' ? typeof value : 'string'
+        return {
+            key,
+            type,
+            stringValue: type === 'string' ? (typeof value === 'string' ? value : JSON.stringify(value)) : '',
+            numberValue: type === 'number' ? value : 0,
+            boolValue: type === 'boolean' ? value : false,
+        }
+    })
+}
+
+function prepareMultiplayerObject(value) {
+    const prepared = Object.assign({}, value, { propertyList: toMultiplayerValueList(value.properties) })
+    delete prepared.properties
+    // Room list items also carry the filter the room was created with
+    if (prepared.filter) {
+        prepared.filterList = toMultiplayerValueList(prepared.filter)
+        delete prepared.filter
+    }
+    return prepared
+}
+
+function stringifyMultiplayerObject(value) {
+    return value ? JSON.stringify(prepareMultiplayerObject(value)) : ''
+}
+
+function stringifyMultiplayerList(values) {
+    return JSON.stringify((values || []).map(prepareMultiplayerObject))
+}
+
+function prepareMultiplayerMessage(message) {
+    return {
+        type: message.type,
+        dataList: toMultiplayerValueList(message.data),
+        from: message.from,
+    }
+}
+
+// Messages wait here and C# takes them once per frame, see PlaygamaBridgeMultiplayerTakeMessages
+const multiplayerMessageQueue = []
+
+function takeMultiplayerMessages() {
+    if (multiplayerMessageQueue.length === 0) {
+        return ''
+    }
+
+    return JSON.stringify(multiplayerMessageQueue.splice(0).map(prepareMultiplayerMessage))
+}
+
+// Other events go right away, so queued messages are delivered first to keep the order
+function sendMultiplayerEventToUnity(name, value) {
+    if (multiplayerMessageQueue.length > 0) {
+        sendMessageToUnity('OnMultiplayerMessagesReceived', takeMultiplayerMessages())
+    }
+
+    sendMessageToUnity(name, value)
+}
+
+function subscribeMultiplayerEvents() {
+    bridge.multiplayer.on('multiplayer_state_changed', state => sendMultiplayerEventToUnity('OnMultiplayerStateChanged', state))
+    bridge.multiplayer.on('multiplayer_room_left', reason => sendMultiplayerEventToUnity('OnMultiplayerRoomLeft', reason))
+    bridge.multiplayer.on('multiplayer_room_updated', room => sendMultiplayerEventToUnity('OnMultiplayerRoomUpdated', stringifyMultiplayerObject(room)))
+    bridge.multiplayer.on('multiplayer_player_joined', player => sendMultiplayerEventToUnity('OnMultiplayerPlayerJoined', stringifyMultiplayerObject(player)))
+    bridge.multiplayer.on('multiplayer_player_left', player => sendMultiplayerEventToUnity('OnMultiplayerPlayerLeft', stringifyMultiplayerObject(player)))
+    bridge.multiplayer.on('multiplayer_player_updated', player => sendMultiplayerEventToUnity('OnMultiplayerPlayerUpdated', stringifyMultiplayerObject(player)))
+    bridge.multiplayer.on('multiplayer_host_changed', player => sendMultiplayerEventToUnity('OnMultiplayerHostChanged', stringifyMultiplayerObject(player)))
+    bridge.multiplayer.on('multiplayer_message_received', message => multiplayerMessageQueue.push(message))
+    bridge.multiplayer.on('multiplayer_sync_state_received', state => sendMultiplayerEventToUnity('OnMultiplayerSyncStateReceived', JSON.stringify(toMultiplayerValueList(state))))
+}
+
+function getMultiplayerErrorCode(error) {
+    return (error && error.code) || ''
+}
+
+window.getIsMultiplayerSupported = function() {
+    return Boolean(bridge.multiplayer && bridge.multiplayer.isSupported).toString()
+}
+
+// Room state in one call: C# caches it and asks again only after a multiplayer event
+window.getMultiplayerSnapshot = function() {
+    const multiplayer = bridge.multiplayer
+    return JSON.stringify({
+        state: multiplayer.state,
+        isInRoom: multiplayer.isInRoom,
+        isHost: multiplayer.isHost,
+        playerId: multiplayer.playerId || '',
+        hostId: multiplayer.hostId || '',
+        roomId: multiplayer.roomId || '',
+        room: multiplayer.room ? prepareMultiplayerObject(multiplayer.room) : null,
+        players: multiplayer.players.map(prepareMultiplayerObject),
+    })
+}
+
+window.takeMultiplayerMessages = takeMultiplayerMessages
+
+window.getIsMultiplayerInviteSupported = function() {
+    return bridge.multiplayer.isInviteSupported.toString()
+}
+
+window.getMultiplayerLaunchRoomId = function() {
+    return bridge.multiplayer.launchRoomId || ''
+}
+
+window.getMultiplayerSyncState = function() {
+    return JSON.stringify(toMultiplayerValueList(bridge.multiplayer.syncState))
+}
+
+window.multiplayerCreateRoom = function(options) {
+    options = JSON.parse(options)
+
+    bridge.multiplayer.createRoom(options)
+        .then(roomId => {
+            sendMessageToUnity('OnMultiplayerCreateRoomCompletedSuccess', roomId)
+        })
+        .catch(error => {
+            sendMessageToUnity('OnMultiplayerCreateRoomCompletedFailed', getMultiplayerErrorCode(error))
+        })
+}
+
+window.multiplayerJoinRoom = function(roomId, options) {
+    options = JSON.parse(options)
+
+    bridge.multiplayer.joinRoom(roomId, options)
+        .then(() => {
+            sendMessageToUnity('OnMultiplayerJoinRoomCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnMultiplayerJoinRoomCompletedFailed', getMultiplayerErrorCode(error))
+        })
+}
+
+window.multiplayerJoinOrCreateRoom = function(options) {
+    options = JSON.parse(options)
+
+    bridge.multiplayer.joinOrCreateRoom(options)
+        .then(roomId => {
+            sendMessageToUnity('OnMultiplayerJoinOrCreateRoomCompletedSuccess', roomId)
+        })
+        .catch(error => {
+            sendMessageToUnity('OnMultiplayerJoinOrCreateRoomCompletedFailed', getMultiplayerErrorCode(error))
+        })
+}
+
+window.multiplayerGetRooms = function(options) {
+    options = JSON.parse(options)
+
+    bridge.multiplayer.getRooms(options)
+        .then(rooms => {
+            sendMessageToUnity('OnMultiplayerGetRoomsCompletedSuccess', stringifyMultiplayerList(rooms))
+        })
+        .catch(error => {
+            sendMessageToUnity('OnMultiplayerGetRoomsCompletedFailed', getMultiplayerErrorCode(error))
+        })
+}
+
+window.multiplayerInviteToRoom = function(options) {
+    options = JSON.parse(options)
+
+    bridge.multiplayer.inviteToRoom(options)
+        .then(() => {
+            sendMessageToUnity('OnMultiplayerInviteToRoomCompletedSuccess', '')
+        })
+        .catch(error => {
+            sendMessageToUnity('OnMultiplayerInviteToRoomCompletedFailed', getMultiplayerErrorCode(error))
+        })
+}
+
+window.multiplayerLeaveRoom = function() {
+    bridge.multiplayer.leaveRoom()
+}
+
+window.multiplayerSetRoomOpen = function(isOpen) {
+    bridge.multiplayer.setRoomOpen(isOpen === 'true')
+}
+
+window.multiplayerSetRoomVisible = function(isVisible) {
+    bridge.multiplayer.setRoomVisible(isVisible === 'true')
+}
+
+window.multiplayerSetRoomProperties = function(properties) {
+    bridge.multiplayer.setRoomProperties(JSON.parse(properties))
+}
+
+window.multiplayerSetPlayerProperties = function(properties) {
+    bridge.multiplayer.setPlayerProperties(JSON.parse(properties))
+}
+
+// to: 'all' / 'others' / 'host', a player id or a JSON array of player ids
+window.multiplayerSend = function(type, data, to) {
+    if (data) {
+        data = JSON.parse(data)
+    }
+
+    bridge.multiplayer.send(type, data, { to: to.charAt(0) === '[' ? JSON.parse(to) : to })
+}
+
+window.multiplayerSetSyncState = function(state) {
+    bridge.multiplayer.setSyncState(JSON.parse(state))
+}

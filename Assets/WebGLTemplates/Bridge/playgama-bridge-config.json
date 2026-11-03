@@ -1,0 +1,30 @@
+{
+    "$schema": "https://bridge.playgama.com/v2/stable/schema.json",
+    "advertisement": {
+        "interstitial": {
+            "preloadOnStart": true,
+            "placements": [
+                { "id": "level_up" },
+                { "id": "game_over" },
+                { "id": "main_menu" }
+            ]
+        },
+        "rewarded": {
+            "preloadOnStart": true,
+            "placements": [
+                { "id": "revive" }
+            ]
+        },
+        "useBuiltInErrorPopup": true,
+        "backfillId": ""
+    },
+    "saas": {
+        "publicToken": "YOUR_PLAYGAMA_SAAS_PUBLIC_TOKEN",
+        "leaderboards": { "platforms": ["playgama", "qa_tool"] }
+    },
+    "leaderboards": [
+        { "id": "planet_defender_best_score", "isMain": true }
+    ],
+    "payments": [],
+    "sendAnalyticsEvents": true
+}

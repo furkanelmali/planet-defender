@@ -1,0 +1,81 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+
+# Firebase
+/Assets/Firebase/
+/Assets/Plugins/Firebase/
+
+# Diğer dosyalar ve klasörler
+/[Tt]est[Rr]esults/
+/[Bb]uildReport/
+
+# Derleme sonuçları ve çıktıları
+/*.apk
+/*.unitypackage
+/*.exe
+/*.pdb
+/*.dll
+/*.mdb
+/*.sln
+/*.userprefs
+
+# Önbelleğe alınmış kütüphaneler ve dosyalar
+/[Ll]ibrary/[Ss]criptAssemblies/
+/[Ll]ibrary/PreloadData.asset
+/[Ll]ibrary/ScriptAssemblies/
+
+# Uygulama verileri ve ayarları
+/[Ll]ibrary/PlayerDataCache/
+/[Ll]ibrary/AssetImportState
+/[Bb]uild/UnityPlayer*.png
+/[Bb]uild/UnityPlayer*.xcodeproj/
+
+# Yedeklenen ve otomatik kaydedilen dosyalar
+/[Tt]emp/UnityLockfile
+/[Ll]ibrary/lockFile
+
+# Unity paket manifestleri sürüm kontrolünde tutulur
+/Packages/*
+!/Packages/manifest.json
+!/Packages/packages-lock.json
+
+# Proje önbelleği
+/[Tt]emp/[Vv]cs-[Cc]ache/
+/[Tt]emp/[Bb]ackedUp+[Uu]nity+[Tt]emps/
+
+# Uygulama yeniden yaratma ve otomatik tamamlama dosyaları
+/[Aa]ssembly-[Cc]Sharp-[Ff]irst+[Pp]ass.asset
+/[Aa]ssembly-[Cc]Sharp-[Ii]n+[Pp]lace+[Cc]ache.asset
+/[Aa]ssembly-[Cc]Sharp-[Ff]irst+[Pp]ass+[Ee]ditor+[Oo]nly+[Aa]ssemblies.asset
+/[Aa]ssembly-[Cc]Sharp-[Rr]eally+[Ii]n+[Pp]lace+[Cc]ache.asset
+/[Uu]sage-[Ss]tats-[Bb]efore+[Oo]ptimize.asset
+/[Uu]sage-[Ss]tats-[Aa]fter+[Oo]ptimize.asset
+
+# Yapılandırma dosyaları
+/[Bb]uild/[Bb]uild+[Cc]onfigs/
+
+# Çöp dosyalar
+[~$]*
+
+# OS X dosyaları
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows dosyaları
+.Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# Local preview server config (points at a temp folder)
+/.claude/launch.json

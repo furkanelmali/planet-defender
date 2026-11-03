@@ -1,0 +1,91 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a88ee8944eb8b4825830a1cca4d23e22, type: 3}
+  m_Name: GameAssets
+  m_EditorClassIdentifier: Assembly-CSharp::PlanetDefender.GameAssets
+  planet: {fileID: 2100000, guid: 0c42a4453a6c84092b98511af5206b2f, type: 2}
+  planetRing: {fileID: 2100000, guid: 63a6b6c2b9ac944a1bd65f0fafac8a31, type: 2}
+  atmosphereGlow: {fileID: 2100000, guid: a238f50b401d3445e93c0f77bdcf5802, type: 2}
+  meteor: {fileID: 2100000, guid: b26868276519b464aa4b0b54a0c20b43, type: 2}
+  gold: {fileID: 2100000, guid: e5b87c2908eb94171b24a8a3e21cce2e, type: 2}
+  bolt: {fileID: 2100000, guid: 6f090df99b07d49a8ab7310368af4da5, type: 2}
+  glow: {fileID: 2100000, guid: a238f50b401d3445e93c0f77bdcf5802, type: 2}
+  shield: {fileID: 2100000, guid: bfeeb5d6c84ef479b81b83c818db3f09, type: 2}
+  laser: {fileID: 2100000, guid: 427aeb8dd8bcd4af4aeab87c105b4fa7, type: 2}
+  starfield: {fileID: 2100000, guid: 3ba8f6dc9027d46629ba144e5e8ab3d9, type: 2}
+  reticle: {fileID: 2100000, guid: b04bfcb1ca3b74ae8bc4a09468ce6480, type: 2}
+  quad: {fileID: 21300000, guid: 55c266404e40a4cfa85b2d6bb4698384, type: 3}
+  softCircle: {fileID: 21300000, guid: e29ca3a29a5a4405d8930f19320c0521, type: 3}
+  ring: {fileID: 21300000, guid: 1d0a0830a9771400d899fb014c12ffde, type: 3}
+  star4: {fileID: 21300000, guid: 5134aca0733424c9cae0855c8a505b1f, type: 3}
+  spark: {fileID: 21300000, guid: 4a38f593493614bf5a87a9a058fbdfc9, type: 3}
+  bolt2D: {fileID: 21300000, guid: 347966db5d6a34069928c16d07fe3a8f, type: 3}
+  turret: {fileID: 21300000, guid: 83d3c9eab7a354aad9b0427d7c5ebc4c, type: 3}
+  crosshair: {fileID: 21300000, guid: cd4d60991ef574387b0795e9ac675fde, type: 3}
+  panel: {fileID: 21300000, guid: 63409a3964a0749a8b34d549e1b4029c, type: 3}
+  panelOutline: {fileID: 21300000, guid: 73403a18b62f94109aba36b2abe36daa, type: 3}
+  pill: {fileID: 21300000, guid: 850b562774a924c12953f22f23ccc8f3, type: 3}
+  pillOutline: {fileID: 21300000, guid: 0f9bdecf8fb6b46a7af3ca08d9ac972c, type: 3}
+  bar: {fileID: 21300000, guid: 850b562774a924c12953f22f23ccc8f3, type: 3}
+  heart: {fileID: 21300000, guid: 14460d8ef8ae6419596b6d37ed530484, type: 3}
+  heartEmpty: {fileID: 21300000, guid: d43604106bdf44d33af7dc81effff1e1, type: 3}
+  coin: {fileID: 21300000, guid: d95df6f50d0b14ca387126be0dc7ca31, type: 3}
+  pause: {fileID: 21300000, guid: 0c91718ce2caa4fd6a4e164880629263, type: 3}
+  gear: {fileID: 21300000, guid: e40d870137d74407ea17500abdc46baa, type: 3}
+  lockIcon: {fileID: 21300000, guid: 9b3ac87a0f6d84b56ba98aae2ba16b8b, type: 3}
+  arrowLeft: {fileID: 21300000, guid: 16ecc82e0eeed4612b573392d2ec7d14, type: 3}
+  arrowRight: {fileID: 21300000, guid: 08bced7e9ce9c4db8bcdb777ec88cc1c, type: 3}
+  musicIcon: {fileID: 21300000, guid: c8033bec7d8f942d49f52815a3808c0a, type: 3}
+  soundIcon: {fileID: 21300000, guid: 4a46761bd13a64c9fa9902ff3368b66f, type: 3}
+  trophy: {fileID: 21300000, guid: c367a59f0948242e49e8e61eaa3b593f, type: 3}
+  playIcon: {fileID: 21300000, guid: 387c701ac6b814f7497a4e2d73103a9b, type: 3}
+  shieldIcon: {fileID: 21300000, guid: ee4862cadba2b4c13a3f95956d430d12, type: 3}
+  upgradeIcons:
+  - {fileID: 21300000, guid: 19ff4ab1f2c724666a226ec2079efd42, type: 3}
+  - {fileID: 21300000, guid: b046f2b878d4a43b989d364a3d4abecb, type: 3}
+  - {fileID: 21300000, guid: e950f22d96a1d481cbef7375065b2b26, type: 3}
+  - {fileID: 21300000, guid: 1a7353a72555b4b64b616ef8cabb2a12, type: 3}
+  - {fileID: 21300000, guid: 980b480ec52cb4653aff5047143951c6, type: 3}
+  - {fileID: 21300000, guid: 42cbe2340a16e487a8ca04764206f94c, type: 3}
+  - {fileID: 21300000, guid: 3713fdab32ff846f98a13c489740a364, type: 3}
+  - {fileID: 21300000, guid: bf5721914cee1441c9a2a011e80efcb1, type: 3}
+  flags:
+  - {fileID: 21300000, guid: 8edfe6cf1a5164dab8fa917c749c12b5, type: 3}
+  - {fileID: 21300000, guid: 9fe10cc0e6e334bce82fc83c15372761, type: 3}
+  - {fileID: 21300000, guid: 8b8af3f1b4ed341e6850d13844e522d2, type: 3}
+  - {fileID: 21300000, guid: be7e8651fa0c84f7583c0e7e8b3d1c5f, type: 3}
+  planetMaps:
+  - {fileID: 2800000, guid: b87cc6996c4d141728d9a5c7cc71bc8c, type: 3}
+  - {fileID: 2800000, guid: b02ddfb48bfb748f58a389d1561a54f8, type: 3}
+  - {fileID: 2800000, guid: 143e3a055b3d44f7cbb79cd35b93f7dc, type: 3}
+  - {fileID: 2800000, guid: 9fbd0d221b1ca4f9687ff5d9d74e181b, type: 3}
+  - {fileID: 2800000, guid: efec3f30d024e46f78da39e87120dad4, type: 3}
+  - {fileID: 2800000, guid: dcba360f05e444670a48aba429957ff8, type: 3}
+  - {fileID: 2800000, guid: 2b0f9ecbb10204046839a1e0dae61543, type: 3}
+  - {fileID: 2800000, guid: dbbb90756237045749209fc5cb9abf96, type: 3}
+  explosionSmall: {fileID: 7520343297909943480, guid: ab21ff4273c3e4532a93c199416d17b7, type: 3}
+  explosionBig: {fileID: 3839163122411247863, guid: 16282021032384178ba94ea7a8d7ca29, type: 3}
+  hitSpark: {fileID: 5455131609249342803, guid: be336fc6f23c64c21bb4ea0b3bc769eb, type: 3}
+  goldPickup: {fileID: 5940226905339903906, guid: f41e3839a65fa4a27bc07497145763d8, type: 3}
+  goldShatter: {fileID: 6666469746683306638, guid: dff716e8a8fba4e77a9aa5c93aa53c9f, type: 3}
+  planetHit: {fileID: 1924605391955354840, guid: b5e98f0f071864630b0da1b44b803874, type: 3}
+  shockwave: {fileID: 5491024376988483131, guid: 36d9c4b611d724e949f57d6a916a4d74, type: 3}
+  muzzle: {fileID: 4615657603764429094, guid: 0e62c04f41f044292ba036f80a143983, type: 3}
+  freezePulse: {fileID: 3390926900520345203, guid: 14e5b3a0e40a943f6a8985901f869d20, type: 3}
+  shieldBreak: {fileID: 9204079766519761824, guid: c60d9bd017e1647a09411d71f6a4fd3c, type: 3}
+  levelUpBurst: {fileID: 8323723013971133374, guid: 249cb1954f0d747efb0c49af267619a0, type: 3}
+  meteorTrail: {fileID: 8305637042111501589, guid: 9dbc90b58b8e3455f80f669f5a1e0ce0, type: 3}
+  goldSparkle: {fileID: 3045338595113809775, guid: d5f31b0645e3f4eca81afdb443d433d4, type: 3}
+  debris: {fileID: 2577026858711476400, guid: bceda9acda7a64e009bd897cce879bd1, type: 3}
+  audio: {fileID: 11400000, guid: 19381d059e62c4051848ae26fb860027, type: 2}
+  font: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
+  volumeProfile: {fileID: 11400000, guid: da4203c1c8f27445bb61262667ae0a15, type: 2}

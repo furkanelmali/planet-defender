@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en-us">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+        <title>Planet Defender</title>
+        <link rel="preconnect" href="https://bridge.playgama.com">
+        <link rel="preload" href="Build/{{{ CODE_FILENAME }}}" as="fetch" type="application/wasm" crossorigin>
+#if typeof PROGRESSIVE_ASSET_LOADING === 'undefined' || !PROGRESSIVE_ASSET_LOADING
+        <link rel="preload" href="Build/{{{ DATA_FILENAME }}}" as="fetch" crossorigin>
+#endif
+        <link rel="preload" href="Build/{{{ FRAMEWORK_FILENAME }}}" as="script">
+        <style>
+            html, body {
+                width: 100%;
+                height: 100%;
+                padding: 0px;
+                margin: 0px;
+                overflow: hidden;
+                background: #060A18;
+                /* No page scroll, pull-to-refresh, text selection, iOS callout or magnifier on long press. */
+                overscroll-behavior: none;
+                touch-action: none;
+                -webkit-user-select: none;
+                user-select: none;
+                -webkit-touch-callout: none;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .fullscreen-canvas {
+                background: #060A18;
+                touch-action: none;
+                outline: none;
+                width: 100%;
+                height: 100%;
+                position: absolute;
+                top: 0px;
+                left: 0px;
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas" class="fullscreen-canvas"></canvas>
+        <script>
+            document.addEventListener('contextmenu', e => e.preventDefault())
+            document.addEventListener('selectstart', e => e.preventDefault())
+            document.addEventListener('gesturestart', e => e.preventDefault())
+            // Hidden tab: suspend every Web Audio context as a backstop to Bridge's pause_state_changed.
+            // Unity keeps its context private, so contexts are recorded as they are created.
+            const audioContexts = []
+            const NativeAudioContext = window.AudioContext || window.webkitAudioContext
+            if (NativeAudioContext) {
+                const TrackedAudioContext = function (options) {
+                    const context = new NativeAudioContext(options)
+                    audioContexts.push(context)
+                    return context
+                }
+                TrackedAudioContext.prototype = NativeAudioContext.prototype
+                window.AudioContext = TrackedAudioContext
+                if (window.webkitAudioContext) window.webkitAudioContext = TrackedAudioContext
+            }
+            document.addEventListener('visibilitychange', () => {
+                for (const context of audioContexts) {
+                    if (document.hidden) { if (context.state === 'running') { context.suspend(); context.suspendedByPage = true } }
+                    else if (context.suspendedByPage) { context.suspendedByPage = false; context.resume() }
+                }
+            })
+        </script>
+        <script src="./playgama-bridge-unity.js"></script>
+    </body>
+</html>
