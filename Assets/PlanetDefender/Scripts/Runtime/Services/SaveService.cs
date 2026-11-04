@@ -10,6 +10,7 @@ namespace PlanetDefender
 {
     [Serializable] public sealed class SaveSettings { public bool musicMuted; public bool sfxMuted; public string language = ""; }
     [Serializable] public sealed class UpgradeLevel { public string id; public int level; }
+    [Serializable] public sealed class MissionState { public string id; public int progress; }
 
     // GDD §15 RunSnapshot. Written only at level-up/ad/pause breaks, never per meteor or per gold.
     [Serializable] public sealed class RunSnapshot
@@ -19,6 +20,7 @@ namespace PlanetDefender
         public List<UpgradeLevel> upgrades = new List<UpgradeLevel>();
         public bool reviveUsed, runSettled;
         public float elapsedSeconds;
+        public int sectorsPassed;
     }
 
     // GDD §14 pd_save_v1. JsonUtility cannot hold a null object, so hasSnapshot marks a live runSnapshot.
@@ -35,6 +37,12 @@ namespace PlanetDefender
         public bool tutorialDone;
         public bool hasSnapshot;
         public RunSnapshot runSnapshot = new RunSnapshot();
+        // Goals: three active missions, the next tier of each type, and the daily reward streak.
+        public int bestSeconds;
+        public List<MissionState> missions = new List<MissionState>();
+        public List<UpgradeLevel> missionTiers = new List<UpgradeLevel>();
+        public int missionCursor, missionsDone;
+        public int dailyDay, dailyStreak;
     }
 
     // Bridge Storage on the web (the only save channel there, GDD §14); PlayerPrefs only in non-web builds.
@@ -75,6 +83,8 @@ namespace PlanetDefender
                 if (string.IsNullOrEmpty(data.selectedPlanet) || !data.unlockedPlanets.Contains(data.selectedPlanet)) data.selectedPlanet = "earth";
                 data.settings ??= new SaveSettings();
                 data.runSnapshot ??= new RunSnapshot();
+                data.missions ??= new List<MissionState>();
+                data.missionTiers ??= new List<UpgradeLevel>();
                 data.bankGold = Mathf.Max(0, data.bankGold);
                 return data;
             }

@@ -40,6 +40,23 @@ namespace PlanetDefender
             SaveService.Save();
         }
 
+        // Rewards earned outside a run (daily reward, doubled gold) go straight to the bank.
+        public static void AddBank(int amount)
+        {
+            if (amount <= 0) return;
+            SaveService.Data.bankGold += amount;
+            SaveService.Save();
+        }
+
+        // The goal the economy points at: the cheapest planet the player does not own yet (null when all are owned).
+        public static PlanetConfig NextPlanet(GameConfig config)
+        {
+            PlanetConfig next = null;
+            foreach (var p in config.planets)
+                if (!IsUnlocked(p.id) && (next == null || p.price < next.price)) next = p;
+            return next;
+        }
+
         // runSettled false → true happens exactly once: lastSettledRunId and the new bank balance share one write.
         public static Settlement Settle(string runId, int unspentSessionGold, int sessionScore)
         {

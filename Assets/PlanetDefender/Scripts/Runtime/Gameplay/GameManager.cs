@@ -32,9 +32,18 @@ namespace PlanetDefender
 
         System.Random rng;
         bool countingDown, busy, levelUpQueued, tutorialRun, tutorialGoldShown, tutorialShotHidden;
+        bool firstRun, awaitingFirstPress, firstKillSent, firstGoldSent, firstLevelSent, bestAnnounced, pendingBreakAd, doubleGoldUsed;
+        float bootReadyAt;
         Transform background;
         float lastAspect;
         GameState stateBeforePause;
+
+        // Nobody has finished a run on this save and none is waiting to be resumed: this player goes straight into play.
+        public bool IsNewPlayer => string.IsNullOrEmpty(SaveService.Data.lastSettledRunId) && !HasResumableRun;
+        public bool FirstRun => firstRun;
+        public bool AwaitingFirstPress => awaitingFirstPress;
+        public bool DoubleGoldAvailable => !doubleGoldUsed && LastSettlement.banked >= Config.ads.doubleGoldMin && PlaygamaBridgeAdapter.RewardedSupported;
+        public bool RewardedAvailable => PlaygamaBridgeAdapter.RewardedSupported;
 
         public bool HasResumableRun
         {
@@ -73,12 +82,30 @@ namespace PlanetDefender
             Loc.Changed += UI.Rebuild;
             PlaygamaBridgeAdapter.ExternalPauseChanged += OnExternalPause;
             LeaderboardService.SubmitPendingBest();
-            PlaygamaBridgeAdapter.Analytics("session_start", new Dictionary<string, object> { { "planet", save.selectedPlanet }, { "bank", save.bankGold } });
-            EnterMenu();
-            // game_ready only once the first interactive menu frame is on screen.
+            PlaygamaBridgeAdapter.FirstInterstitialAfter = Config.ads.firstInterstitialAfter;
+            PlaygamaBridgeAdapter.InterstitialCooldown = Config.ads.interstitialCooldown;
+            // game_ready must go out whatever happens to the first screen: a failure here falls back to the menu.
+            try
+            {
+                MissionService.Init(Config);
+                MissionService.Completed += OnMissionCompleted;
+                bool newPlayer = IsNewPlayer;
+                PlaygamaBridgeAdapter.Analytics("session_start", new Dictionary<string, object>
+                    { { "planet", save.selectedPlanet }, { "bank", save.bankGold }, { "new_player", newPlayer }, { "mobile", PlaygamaBridgeAdapter.IsMobile } });
+                // A new player's first screen is the game itself, not a menu with six choices.
+                if (newPlayer) StartRun(RunState.Fresh(Config.Planet(save.selectedPlanet)), false);
+                else EnterMenu();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                try { awaitingFirstPress = false; EnterMenu(); } catch (Exception inner) { Debug.LogException(inner); }
+            }
+            // game_ready only once the first interactive frame is on screen.
             yield return null;
             yield return new WaitForEndOfFrame();
             PlaygamaBridgeAdapter.SendGameReady();
+            bootReadyAt = Time.realtimeSinceStartup;
         }
 
         void BuildWorld()
@@ -113,10 +140,21 @@ namespace PlanetDefender
             FrameCamera(false);
             if (State == GameState.Running && !countingDown)
             {
-                Arena.Tick(Time.deltaTime);
-                // A death in the same frame wins over a queued level-up.
-                if (levelUpQueued && State == GameState.Running) { levelUpQueued = false; BeginLevelUp(); }
-                else if (Run != null && Run.elapsed > 200f) AudioService.Instance?.PlayMusic(Music.Pressure, 2f);
+                // A new player's run holds still until their first press, so the opening cannot be missed or lost.
+                if (awaitingFirstPress && Arena.Firing) OnFirstPress();
+                if (!awaitingFirstPress)
+                {
+                    Arena.Tick(Time.deltaTime);
+                    if (Run != null)
+                    {
+                        MissionService.Tick(Run);
+                        TickSectors();
+                        TickBestScore();
+                    }
+                    // A death in the same frame wins over a queued level-up.
+                    if (levelUpQueued && State == GameState.Running) { levelUpQueued = false; BeginLevelUp(); }
+                    else if (Run != null && Run.elapsed > 200f) AudioService.Instance?.PlayMusic(Music.Pressure, 2f);
+                }
             }
             // P only: Esc belongs to the browser (leaves full screen), Playgama 1.5.2.
             if (Input.GetKeyDown(KeyCode.P))
@@ -153,6 +191,7 @@ namespace PlanetDefender
             UI.Menu.Show();
             AudioService.Instance?.PlayMusic(Music.Menu);
             LeaderboardService.SubmitPendingBest();
+            if (DailyService.Pending) UI.Daily.Show();
         }
 
         void MovePlanet(Vector3 position, float scale, float duration)
@@ -203,6 +242,47 @@ namespace PlanetDefender
         }
 
         public void OpenLanguage() => UI.Language.Show();
+        public void OpenGoals() => UI.Goals.Show();
+
+        public void ClaimDaily()
+        {
+            if (busy || !DailyService.Pending) return;
+            GrantDaily(false);
+        }
+
+        public void WatchDailyDouble()
+        {
+            if (busy || !DailyService.Pending) return;
+            ShowRewarded(PlaygamaBridgeAdapter.AdDailyDouble, granted =>
+            {
+                if (granted) GrantDaily(true);
+                else UI.Daily.ShowAdFailed();
+            });
+        }
+
+        void GrantDaily(bool doubled)
+        {
+            int amount = DailyService.Claim(Config, doubled);
+            AudioService.Instance?.Play(Sfx.Unlock);
+            Juice.BloomPulse(1f, 0.6f);
+            UI.Daily.Hide();
+            UI.Menu.Refresh();
+            UI.Menu.CelebrateBank(amount);
+        }
+
+        // Every rewarded placement goes through here: reward only on the SDK's Rewarded state, buttons wait while it plays.
+        void ShowRewarded(string placement, Action<bool> finished)
+        {
+            busy = true;
+            bool granted = false;
+            PlaygamaBridgeAdapter.Analytics("rewarded_offer_taken", new Dictionary<string, object> { { "placement", placement } });
+            StartCoroutine(PlaygamaBridgeAdapter.Rewarded(placement, () => granted = true, () =>
+            {
+                busy = false;
+                if (granted) PlaygamaBridgeAdapter.Analytics("rewarded_success", new Dictionary<string, object> { { "placement", placement } });
+                finished(granted);
+            }));
+        }
 
         public void OpenSettings()
         {
@@ -220,6 +300,13 @@ namespace PlanetDefender
         public void Play()
         {
             if (busy) return;
+            // The break the player skipped by going to the shop after a run is taken here, as they head back into play.
+            if (pendingBreakAd) { pendingBreakAd = false; AfterBreak(PlaygamaBridgeAdapter.AdGameOver, PlayNow); return; }
+            PlayNow();
+        }
+
+        void PlayNow()
+        {
             // A suspended run the player chose not to continue is settled normally before a new one starts.
             if (HasResumableRun)
             {
@@ -253,12 +340,78 @@ namespace PlanetDefender
             PlaygamaBridgeAdapter.Analytics("run_start", new Dictionary<string, object> { { "planet", run.planet.id }, { "resumed", resumed } });
             tutorialRun = !SaveService.Data.tutorialDone && !resumed;
             tutorialGoldShown = false; tutorialShotHidden = false;
+            firstRun = !resumed && IsNewPlayerForRun;
+            awaitingFirstPress = firstRun;
+            firstKillSent = firstGoldSent = firstLevelSent = bestAnnounced = false;
+            doubleGoldUsed = false;
+            pendingBreakAd = false;
+            Arena.AssistUntil = firstRun ? Config.firstRun.assistSeconds : 0f;
+            MissionService.BeginRun(run);
+            if (!firstRun) PlaygamaBridgeAdapter.NotePlayStarted();
+            if (firstRun)
+            {
+                Arena.SpawnIntroMeteor();
+                UI.Hud.PointAt(() => Arena.IntroMeteorPosition + Vector2.up * 0.55f, Loc.T("hint_intro"), Palette.Gold);
+            }
             if (resumed) StartCountdown(() => Arena.InputEnabled = true);
             else
             {
                 Arena.InputEnabled = true;
-                if (tutorialRun) UI.Hud.ShowHint(Loc.T("hint_shoot"), Loc.T("hint_shoot_body"));
+                if (tutorialRun)
+                {
+                    bool mobile = PlaygamaBridgeAdapter.IsMobile;
+                    UI.Hud.ShowHint(Loc.T(mobile ? "hint_shoot" : "hint_shoot_pc"), Loc.T(mobile ? "hint_shoot_body" : "hint_shoot_pc_body"));
+                }
             }
+        }
+
+        // Asked before the run's id is settled anywhere: nothing has been banked yet on this save.
+        bool IsNewPlayerForRun => string.IsNullOrEmpty(SaveService.Data.lastSettledRunId);
+
+        void OnFirstPress()
+        {
+            awaitingFirstPress = false;
+            PlaygamaBridgeAdapter.NotePlayStarted();
+            float waited = bootReadyAt > 0 ? Time.realtimeSinceStartup - bootReadyAt : 0f;
+            PlaygamaBridgeAdapter.Analytics("first_input", new Dictionary<string, object> { { "seconds", Mathf.RoundToInt(waited) }, { "mobile", PlaygamaBridgeAdapter.IsMobile } });
+        }
+
+        // ------------------------------------------------------------------ goals during a run
+
+        void TickSectors()
+        {
+            while (State == GameState.Running && Run.elapsed >= Config.SectorTime(Run.sectorsPassed))
+            {
+                int index = Run.sectorsPassed++;
+                int bonus = Config.SectorBonus(index);
+                Run.sessionGold += bonus;
+                Run.goldEarned += bonus;
+                string threat = Config.ThreatAt(index);
+                string body = "+" + UIKit.Num(bonus) + (threat != null ? "  ·  " + Loc.T("threat_" + threat) : "");
+                UI.Hud.Announce(Loc.F("sector_title", index + 2), body, Palette.Plasma);
+                UI.Hud.PunchGold();
+                AudioService.Instance?.Play(Sfx.Unlock, 0.7f);
+                Juice.BloomPulse(0.7f, 0.5f);
+                if (index >= Config.sectors.bigFrom) Arena.SpawnSectorMeteor();
+                PlaygamaBridgeAdapter.Analytics("sector_reached", new Dictionary<string, object>
+                    { { "sector", index + 2 }, { "elapsed", Mathf.RoundToInt(Run.elapsed) }, { "first_run", firstRun }, { "level", Run.level } });
+            }
+        }
+
+        void TickBestScore()
+        {
+            int best = SaveService.Data.bestScore;
+            if (bestAnnounced || best <= 0 || Run.score <= best) return;
+            bestAnnounced = true;
+            UI.Hud.Announce(Loc.T("new_best"), "", Palette.Gold);
+            AudioService.Instance?.Play(Sfx.NewBest, 0.7f);
+        }
+
+        void OnMissionCompleted(ActiveMission mission)
+        {
+            UI.Hud.Announce(Loc.T("mission_done"), $"{mission.Title}  +{UIKit.Num(mission.reward)}", Palette.Gold);
+            UI.Hud.PunchGold();
+            AudioService.Instance?.Play(Sfx.Purchase, 0.8f);
         }
 
         void StartCountdown(Action then)
@@ -301,16 +454,28 @@ namespace PlanetDefender
             Juice.Kick(0.2f, 0.35f);
             Arena.Planet.Pulse(0.12f);
             PlaygamaBridgeAdapter.Analytics("level_up", new Dictionary<string, object> { { "level", run.level }, { "elapsed", Mathf.RoundToInt(run.elapsed) } });
-            SaveSnapshot();
-            busy = true;
-            // Natural break: Bridge decides whether an interstitial actually shows; the cards follow either way.
-            StartCoroutine(PlaygamaBridgeAdapter.Interstitial(PlaygamaBridgeAdapter.AdLevelUp, () =>
+            if (!firstLevelSent)
             {
-                busy = false;
+                firstLevelSent = true;
+                PlaygamaBridgeAdapter.Analytics("first_level_up", new Dictionary<string, object> { { "elapsed", Mathf.RoundToInt(run.elapsed) }, { "first_run", firstRun } });
+            }
+            SaveSnapshot();
+            UI.Hud.HideHint();
+            // The reward comes first; the interstitial waits until the player leaves the cards (CloseLevelUp).
+            Offers = UpgradeShop.Roll(Config, run, rng, 3, firstRun && run.level == 2);
+            UI.LevelUp.Open(run, Offers);
+        }
+
+        // One card per level-up can be taken for an ad when the player cannot afford it.
+        public void WatchUpgradeAd(UpgradeOffer offer, Action<bool> finished)
+        {
+            if (State != GameState.LevelUp || busy) { finished(false); return; }
+            ShowRewarded(PlaygamaBridgeAdapter.AdUpgradeFree, granted =>
+            {
                 if (State != GameState.LevelUp) return;
-                Offers = UpgradeShop.Roll(Config, run, rng);
-                UI.LevelUp.Open(run, Offers);
-            }));
+                if (granted) { offer.price = 0; BuyUpgrade(offer); }
+                finished(granted);
+            });
         }
 
         public bool BuyUpgrade(UpgradeOffer offer)
@@ -322,18 +487,27 @@ namespace PlanetDefender
             return true;
         }
 
-        public void SkipUpgrade() => CloseLevelUp();
+        public void SkipUpgrade() { if (!busy) CloseLevelUp(); }
 
         public void CloseLevelUp()
         {
             if (State != GameState.LevelUp) return;
             UI.LevelUp.Hide();
             if (Run.xp >= Run.XpNeeded) { DOVirtual.DelayedCall(0.2f, () => { if (State == GameState.LevelUp) BeginLevelUp(); }, true); return; }
-            State = GameState.Running;
-            AudioService.Instance?.Duck(false);
-            TimeController.Unfreeze(0.3f);
-            Arena.InputEnabled = true;
             SaveSnapshot();
+            // Natural break, after the reward. Bridge and our own pacing decide whether an ad actually shows.
+            busy = true;
+            StartCoroutine(PlaygamaBridgeAdapter.Interstitial(PlaygamaBridgeAdapter.AdLevelUp, () =>
+            {
+                busy = false;
+                if (State != GameState.LevelUp) return;
+                State = GameState.Running;
+                AudioService.Instance?.Duck(false);
+                // Back from an ad the player needs a moment to find the action again.
+                if (PlaygamaBridgeAdapter.LastInterstitialOpened) { StartCountdown(() => Arena.InputEnabled = true); return; }
+                TimeController.Unfreeze(0.3f);
+                Arena.InputEnabled = true;
+            }));
         }
 
         // ------------------------------------------------------------------ pause
@@ -371,16 +545,20 @@ namespace PlanetDefender
 
         void OnExternalPause(bool paused)
         {
-            if (paused && State == GameState.Running && !countingDown && !PlaygamaBridgeAdapter.AdOpen) Pause();
+            // Planned ads run from frozen states, so an ad during live play can only be one that opened after its request timed out.
+            if (paused && CanAutoPause) Pause();
         }
+
+        // Before the first press nothing moves, so a lost focus has nothing to protect and must not add a pause screen.
+        bool CanAutoPause => State == GameState.Running && !countingDown && !awaitingFirstPress;
 
         void OnApplicationFocus(bool focused)
         {
             PlaygamaBridgeAdapter.SetFocus(focused);
-            if (!focused && State == GameState.Running && !countingDown && !Application.isEditor) Pause();
+            if (!focused && CanAutoPause && !Application.isEditor) Pause();
         }
 
-        void OnApplicationPause(bool paused) { if (paused && State == GameState.Running && !countingDown) Pause(); }
+        void OnApplicationPause(bool paused) { if (paused && CanAutoPause) Pause(); }
 
         // ------------------------------------------------------------------ damage, death, revive
 
@@ -405,7 +583,7 @@ namespace PlanetDefender
             // No sudden cut: motion slows to a stop, then the revive offer or results appear (GDD §9).
             TimeController.Freeze(0.7f);
             bool offer = !Run.reviveUsed && PlaygamaBridgeAdapter.RewardedSupported;
-            if (offer) PlaygamaBridgeAdapter.Analytics("rewarded_offer", new Dictionary<string, object> { { "level", Run.level } });
+            if (offer) PlaygamaBridgeAdapter.Analytics("rewarded_offer", new Dictionary<string, object> { { "placement", PlaygamaBridgeAdapter.AdRevive }, { "level", Run.level } });
             DOVirtual.DelayedCall(0.8f, () =>
             {
                 if (State != GameState.ReviveOffer) return;
@@ -416,17 +594,15 @@ namespace PlanetDefender
         public void WatchRevive()
         {
             if (State != GameState.ReviveOffer || busy) return;
-            busy = true;
             UI.Revive.SetBusy(true);
-            bool granted = false;
-            StartCoroutine(PlaygamaBridgeAdapter.Rewarded(PlaygamaBridgeAdapter.AdRevive, () => granted = true, () =>
+            ShowRewarded(PlaygamaBridgeAdapter.AdRevive, granted =>
             {
-                busy = false;
                 UI.Revive.SetBusy(false);
                 if (State != GameState.ReviveOffer) return;
+                if (!granted) { UI.Revive.ShowAdFailed(); return; }   // the choice stays with the player: try again or end the run
                 UI.Revive.Hide();
-                if (granted) DoRevive(); else FinishRun();
-            }));
+                DoRevive();
+            });
         }
 
         void DoRevive()
@@ -434,7 +610,6 @@ namespace PlanetDefender
             var run = Run;
             run.reviveUsed = true;
             run.hp = 1;
-            PlaygamaBridgeAdapter.Analytics("rewarded_success", new Dictionary<string, object> { { "level", run.level } });
             Arena.ReviveClear(Config.player.reviveClearRadius);
             Arena.Planet.Pulse(0.25f);
             AudioService.Instance?.Play(Sfx.Revive);
@@ -452,6 +627,7 @@ namespace PlanetDefender
         public void DeclineRevive()
         {
             if (State != GameState.ReviveOffer || busy) return;
+            PlaygamaBridgeAdapter.Analytics("revive_decline", new Dictionary<string, object> { { "level", Run.level }, { "elapsed", Mathf.RoundToInt(Run.elapsed) } });
             UI.Revive.Hide();
             FinishRun();
         }
@@ -461,6 +637,8 @@ namespace PlanetDefender
         {
             var run = Run;
             if (run == null || run.settled) return;
+            MissionService.Tick(run);   // the final score and time can still finish a mission; its gold is banked below
+            SaveService.Data.bestSeconds = Mathf.Max(SaveService.Data.bestSeconds, Mathf.FloorToInt(run.elapsed));
             LastSettlement = EconomyService.Settle(run.runId, run.sessionGold, run.score);
             run.settled = true;
             LastRun = run;
@@ -475,7 +653,8 @@ namespace PlanetDefender
             PlaygamaBridgeAdapter.Analytics("run_end", new Dictionary<string, object>
             {
                 { "planet", run.planet.id }, { "score", run.score }, { "level", run.level }, { "elapsed", Mathf.RoundToInt(run.elapsed) },
-                { "gold_earned", run.goldEarned }, { "gold_spent", run.goldSpent }, { "kills", run.kills }, { "revived", run.reviveUsed }
+                { "gold_earned", run.goldEarned }, { "gold_spent", run.goldSpent }, { "kills", run.kills }, { "revived", run.reviveUsed },
+                { "sector", run.sectorsPassed + 1 }, { "first_run", firstRun }, { "missions", MissionService.CompletedThisRun }, { "mobile", PlaygamaBridgeAdapter.IsMobile }
             });
             if (SaveService.Data.tutorialDone == false && run.goldEarned > 0) { SaveService.Data.tutorialDone = true; SaveService.Save(); }
             UI.HideAll(true);
@@ -492,13 +671,42 @@ namespace PlanetDefender
 
         public void Retry() => AfterBreak(PlaygamaBridgeAdapter.AdGameOver, () => StartRun(RunState.Fresh(Config.Planet(SaveService.Data.selectedPlanet)), false));
         public void GameOverToMenu() => AfterBreak(PlaygamaBridgeAdapter.AdMainMenu, EnterMenu);
-        public void GameOverToShop() => AfterBreak(PlaygamaBridgeAdapter.AdGameOver, () => { EnterMenu(); OpenShop(); });
+
+        // Going to spend gold is the behaviour the game wants most, so no ad stands in its way: the break moves to the next Play.
+        public void GameOverToShop()
+        {
+            if (busy) return;
+            EnterMenu();
+            OpenShop();
+            pendingBreakAd = true;
+        }
+
+        public void WatchDoubleGold()
+        {
+            if (busy || State != GameState.GameOver || !DoubleGoldAvailable) return;
+            int amount = LastSettlement.banked;
+            UI.GameOver.SetDoubleBusy(true);
+            ShowRewarded(PlaygamaBridgeAdapter.AdDoubleGold, granted =>
+            {
+                UI.GameOver.SetDoubleBusy(false);
+                if (!granted) { UI.GameOver.ShowAdFailed(); return; }
+                doubleGoldUsed = true;
+                EconomyService.AddBank(amount);
+                AudioService.Instance?.Play(Sfx.Unlock);
+                UI.GameOver.ShowDoubled(amount);
+            });
+        }
 
         // ------------------------------------------------------------------ juice hooks
 
         void OnGoldLanded(Vector3 at, int amount)
         {
             UI.FlyCoin(at, UI.Hud.PunchGold);
+            if (!firstGoldSent)
+            {
+                firstGoldSent = true;
+                PlaygamaBridgeAdapter.Analytics("first_gold", new Dictionary<string, object> { { "elapsed", Mathf.RoundToInt(Run.elapsed) }, { "first_run", firstRun } });
+            }
             if (tutorialRun && !SaveService.Data.tutorialDone)
             {
                 SaveService.Data.tutorialDone = true;
@@ -519,6 +727,11 @@ namespace PlanetDefender
 
         void OnMeteorKilled()
         {
+            if (!firstKillSent)
+            {
+                firstKillSent = true;
+                PlaygamaBridgeAdapter.Analytics("first_kill", new Dictionary<string, object> { { "elapsed", Mathf.RoundToInt(Run.elapsed) }, { "first_run", firstRun } });
+            }
             if (!tutorialRun || tutorialShotHidden || tutorialGoldShown) return;
             if (Arena.ShotsFired >= 4) { tutorialShotHidden = true; UI.Hud.HideHint(); }
         }
@@ -526,6 +739,7 @@ namespace PlanetDefender
         void OnDestroy()
         {
             PlaygamaBridgeAdapter.ExternalPauseChanged -= OnExternalPause;
+            MissionService.Completed -= OnMissionCompleted;
             if (UI != null) Loc.Changed -= UI.Rebuild;
             TimeController.ResetAll();
             DOTween.KillAll();

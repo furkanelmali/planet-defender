@@ -19,6 +19,11 @@ namespace PlanetDefender
         public float laserWidth = 0.32f;
         public float droneRange = 6.5f;
         public CapsConfig caps;
+        public SectorConfig sectors = new SectorConfig();
+        public AdConfig ads = new AdConfig();
+        public FirstRunConfig firstRun = new FirstRunConfig();
+        public DailyConfig daily = new DailyConfig();
+        public MissionConfig[] missions = new MissionConfig[0];
 
         static GameConfig cached;
         public static GameConfig Load()
@@ -34,6 +39,17 @@ namespace PlanetDefender
         public PlanetConfig Planet(string id) { foreach (var p in planets) if (p.id == id) return p; return planets[0]; }
         public UpgradeConfig Upgrade(string id) { foreach (var u in upgrades) if (u.id == id) return u; return null; }
         public int PlanetIndex(string id) { for (int i = 0; i < planets.Length; i++) if (planets[i].id == id) return i; return 0; }
+
+        // Sector milestones: the first one comes early (a payoff inside the first 30 s), then one per minute.
+        public float SectorTime(int index) => index <= 0 ? sectors.firstAt : sectors.every * index;
+        public int SectorBonus(int index) => sectors.baseBonus + sectors.bonusStep * Mathf.Max(0, index);
+        public int SectorsAt(float elapsed) { int n = 0; while (elapsed >= SectorTime(n)) n++; return n; }
+        public string ThreatAt(int index)
+        {
+            float time = SectorTime(index);
+            foreach (var m in meteors) if (m.unlockAt > 0 && Mathf.Approximately(m.unlockAt, time)) return m.id;
+            return null;
+        }
 
         // GDD §7: 100 + 40(L-1) + 5(L-1)^2.
         public static int XpForLevel(int level) { int n = level - 1; return 100 + 40 * n + 5 * n * n; }
@@ -89,6 +105,25 @@ namespace PlanetDefender
         public float[] values, values2;
         public float Value(int level) => level <= 0 || values == null || values.Length == 0 ? 0 : values[Mathf.Min(level, values.Length) - 1];
         public float Value2(int level) => level <= 0 || values2 == null || values2.Length == 0 ? 0 : values2[Mathf.Min(level, values2.Length) - 1];
+    }
+
+    [Serializable] public sealed class SectorConfig { public float firstAt = 30, every = 60; public int baseBonus = 15, bonusStep = 15, bigFrom = 2; }
+    [Serializable] public sealed class AdConfig { public float firstInterstitialAfter = 45, interstitialCooldown = 60; public int doubleGoldMin = 20; }
+    [Serializable] public sealed class FirstRunConfig { public float assistSeconds = 45; }
+    [Serializable] public sealed class DailyConfig { public int[] rewards = { 50, 75, 100, 150, 200, 300, 500 }; }
+
+    [Serializable] public sealed class MissionConfig
+    {
+        public string id, stat;
+        public bool perRun;   // true: one run must reach the target; false: progress adds up across runs
+        public float start, step, growth = 1, reward, rewardGrowth = 1;
+
+        public int Target(int tier)
+        {
+            int value = Mathf.RoundToInt((start + step * tier) * Mathf.Pow(growth, tier));
+            return value >= 20 ? Mathf.RoundToInt(value / 5f) * 5 : value;
+        }
+        public int Reward(int tier) => Mathf.RoundToInt(reward * Mathf.Pow(rewardGrowth, tier) / 5f) * 5;
     }
 
     [Serializable] public sealed class CapsConfig { public float minFireInterval = 0.12f, maxSlow = 0.6f; }

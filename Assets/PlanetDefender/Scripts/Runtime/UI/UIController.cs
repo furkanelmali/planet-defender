@@ -25,6 +25,8 @@ namespace PlanetDefender
         public SettingsScreen Settings { get; private set; }
         public CountdownOverlay Countdown { get; private set; }
         public LanguageScreen Language { get; private set; }
+        public GoalsScreen Goals { get; private set; }
+        public DailyScreen Daily { get; private set; }
         UIScreen[] all;
         Rect lastSafe;
         Vector2 lastScreen;
@@ -52,6 +54,8 @@ namespace PlanetDefender
                 var es = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
                 es.transform.SetParent(transform.parent, false);
             }
+            // Space is the auto-fire key: it must never "submit" whichever button was clicked last.
+            foreach (var es in FindObjectsByType<EventSystem>(FindObjectsSortMode.None)) es.sendNavigationEvents = false;
             Build();
         }
 
@@ -71,8 +75,10 @@ namespace PlanetDefender
             Settings = new SettingsScreen(safe, game);
             Countdown = new CountdownOverlay(safe, game);
             Language = new LanguageScreen(safe, game);
+            Goals = new GoalsScreen(safe, game);
+            Daily = new DailyScreen(safe, game);
             flyLayer = UIKit.Rect(safe, "Fly").Stretch();
-            all = new UIScreen[] { Loading, Menu, Shop, Hud, LevelUp, Pause, Revive, GameOver, Leaderboard, Settings, Countdown, Language };
+            all = new UIScreen[] { Loading, Menu, Shop, Hud, LevelUp, Pause, Revive, GameOver, Leaderboard, Settings, Countdown, Language, Goals, Daily };
             lastSafe = default;
             Layout();
         }

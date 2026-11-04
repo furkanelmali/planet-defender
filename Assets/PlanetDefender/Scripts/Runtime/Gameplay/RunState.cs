@@ -9,7 +9,7 @@ namespace PlanetDefender
     {
         public string runId;
         public PlanetConfig planet;
-        public int hp, maxHp, level = 1, xp, score, sessionGold, goldEarned, goldSpent, kills;
+        public int hp, maxHp, level = 1, xp, score, sessionGold, goldEarned, goldSpent, kills, sectorsPassed;
         public float elapsed;
         public bool reviveUsed, settled;
         public readonly Dictionary<string, int> upgrades = new Dictionary<string, int>();
@@ -34,6 +34,8 @@ namespace PlanetDefender
                 elapsed = s.elapsedSeconds, reviveUsed = s.reviveUsed,
             };
             run.maxHp = Mathf.Max(run.planet.hp, run.hp);
+            // Older saves have no sector count: already-passed milestones must not pay out again.
+            run.sectorsPassed = Mathf.Max(s.sectorsPassed, config.SectorsAt(s.elapsedSeconds));
             if (s.upgrades != null) foreach (var u in s.upgrades) run.upgrades[u.id] = u.level;
             return run;
         }
@@ -43,7 +45,7 @@ namespace PlanetDefender
             var s = new RunSnapshot
             {
                 runId = runId, planet = planet.id, hp = hp, level = level, xp = xp, score = score, sessionGold = sessionGold,
-                goldEarned = goldEarned, goldSpent = goldSpent, kills = kills, reviveUsed = reviveUsed, elapsedSeconds = elapsed, runSettled = settled,
+                goldEarned = goldEarned, goldSpent = goldSpent, kills = kills, reviveUsed = reviveUsed, elapsedSeconds = elapsed, runSettled = settled, sectorsPassed = sectorsPassed,
             };
             foreach (var pair in upgrades) s.upgrades.Add(new UpgradeLevel { id = pair.Key, level = pair.Value });
             return s;

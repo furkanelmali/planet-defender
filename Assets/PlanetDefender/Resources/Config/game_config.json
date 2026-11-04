@@ -65,6 +65,19 @@
     { "id": "orbital_drone","basePrice": 140, "maxLevel": 2, "values": [1, 2],            "values2": [0.95, 0.75] },
     { "id": "laser_beam",   "basePrice": 200, "maxLevel": 2, "values": [8.0, 5.0],        "values2": [9.0, 9.0] }
   ],
+  "sectors": { "firstAt": 30, "every": 60, "baseBonus": 15, "bonusStep": 15, "bigFrom": 2 },
+  "ads": { "firstInterstitialAfter": 45, "interstitialCooldown": 60, "doubleGoldMin": 20 },
+  "firstRun": { "assistSeconds": 45 },
+  "daily": { "rewards": [50, 75, 100, 150, 200, 300, 500] },
+  "missions": [
+    { "id": "kills_total",    "stat": "kills",    "perRun": false, "start": 15,   "step": 0,  "growth": 1.7, "reward": 25, "rewardGrowth": 1.35 },
+    { "id": "level_run",      "stat": "level",    "perRun": true,  "start": 3,    "step": 1,  "growth": 1.0, "reward": 30, "rewardGrowth": 1.35 },
+    { "id": "survive_run",    "stat": "survive",  "perRun": true,  "start": 60,   "step": 30, "growth": 1.0, "reward": 35, "rewardGrowth": 1.35 },
+    { "id": "upgrades_total", "stat": "upgrades", "perRun": false, "start": 1,    "step": 1,  "growth": 1.0, "reward": 25, "rewardGrowth": 1.3 },
+    { "id": "gold_total",     "stat": "gold",     "perRun": false, "start": 100,  "step": 0,  "growth": 1.6, "reward": 30, "rewardGrowth": 1.35 },
+    { "id": "streak_run",     "stat": "streak",   "perRun": true,  "start": 15,   "step": 10, "growth": 1.0, "reward": 35, "rewardGrowth": 1.35 },
+    { "id": "score_run",      "stat": "score",    "perRun": true,  "start": 5000, "step": 0,  "growth": 1.6, "reward": 40, "rewardGrowth": 1.35 }
+  ],
   "upgradePriceGrowth": 1.65,
   "freezePulsePeriod": 20,
   "laserDuration": 0.7,

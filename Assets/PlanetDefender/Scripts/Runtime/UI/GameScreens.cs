@@ -16,6 +16,12 @@ namespace PlanetDefender
         readonly List<Image> heartImages = new List<Image>();
         readonly RectTransform pointer;
         readonly TextMeshProUGUI pointerText;
+        readonly TextMeshProUGUI sectorLine, missionLine, bannerTitle, bannerBody;
+        readonly RectTransform banner;
+        readonly CanvasGroup bannerGroup;
+        readonly Queue<(string title, string body, Color color)> banners = new Queue<(string, string, Color)>();
+        bool bannerBusy;
+        float nextGoalRefresh;
         int shownScore, shownGold, shownHp = -1, shownLevel;
         float shownXp;
         Tween scoreTween, goldTween, hintTween;
@@ -63,6 +69,12 @@ namespace PlanetDefender
             combo = UIKit.Text(top, "Combo", "", 14, Palette.Plasma, TextAlignmentOptions.Left, true, 1);
             LeftOfCorner(combo.rectTransform, -90, 20);
             combo.textWrappingMode = TextWrappingModes.NoWrap;
+            sectorLine = UIKit.Text(top, "Sector", "", 11, Palette.PlasmaSoft, TextAlignmentOptions.Left, true, 1);
+            LeftOfCorner(sectorLine.rectTransform, -112, 16);
+            sectorLine.enableAutoSizing = true; sectorLine.fontSizeMin = 8; sectorLine.fontSizeMax = 11; sectorLine.textWrappingMode = TextWrappingModes.NoWrap;
+            missionLine = UIKit.Text(top, "Mission", "", 11, Palette.TextDim, TextAlignmentOptions.Left, false, 0);
+            LeftOfCorner(missionLine.rectTransform, -130, 16);
+            missionLine.enableAutoSizing = true; missionLine.fontSizeMin = 8; missionLine.fontSizeMax = 11; missionLine.textWrappingMode = TextWrappingModes.NoWrap;
 
             hearts = UIKit.Rect(top, "Hearts");
             hearts.Place(new Vector2(1, 1), new Vector2(0, -56), new Vector2(CornerWidth, 24));
@@ -98,6 +110,55 @@ namespace PlanetDefender
             pointerText.rectTransform.Stretch();
             pointerText.fontSharedMaterial = UIKit.OutlinedFont(UIKit.Assets.font);
             pointer.gameObject.SetActive(false);
+
+            banner = UIKit.Rect(column, "Banner");
+            banner.Place(new Vector2(0.5f, 1), new Vector2(0, -172), new Vector2(370, 58));
+            bannerGroup = banner.gameObject.AddComponent<CanvasGroup>();
+            bannerGroup.blocksRaycasts = false; bannerGroup.interactable = false;
+            bannerTitle = UIKit.Text(banner, "Title", "", 22, Palette.Plasma, TextAlignmentOptions.Center, true, 3);
+            bannerTitle.rectTransform.Place(new Vector2(0.5f, 1), Vector2.zero, new Vector2(370, 30));
+            bannerTitle.fontSharedMaterial = UIKit.OutlinedFont(UIKit.Assets.font);
+            bannerTitle.enableAutoSizing = true; bannerTitle.fontSizeMin = 14; bannerTitle.fontSizeMax = 22; bannerTitle.textWrappingMode = TextWrappingModes.NoWrap;
+            bannerBody = UIKit.Text(banner, "Body", "", 14, Palette.Gold, TextAlignmentOptions.Center, true, 1);
+            bannerBody.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -32), new Vector2(370, 22));
+            bannerBody.fontSharedMaterial = UIKit.OutlinedFont(UIKit.Assets.font);
+            bannerBody.enableAutoSizing = true; bannerBody.fontSizeMin = 10; bannerBody.fontSizeMax = 14; bannerBody.textWrappingMode = TextWrappingModes.NoWrap;
+            banner.gameObject.SetActive(false);
+        }
+
+        // Short goal announcements, one at a time, so a sector and a mission landing together both get read.
+        public void Announce(string title, string body, Color color)
+        {
+            banners.Enqueue((title, body, color));
+            if (!bannerBusy) NextBanner();
+        }
+
+        void NextBanner()
+        {
+            if (banners.Count == 0 || !Visible) { bannerBusy = false; banner.gameObject.SetActive(false); return; }
+            bannerBusy = true;
+            var item = banners.Dequeue();
+            bannerTitle.text = item.title; bannerTitle.color = item.color;
+            bannerBody.text = item.body;
+            banner.gameObject.SetActive(true);
+            bannerGroup.alpha = 0;
+            banner.localScale = Vector3.one * 0.8f;
+            DOTween.Sequence().SetUpdate(true).SetTarget(bannerGroup)
+                .Append(bannerGroup.DOFade(1f, 0.15f))
+                .Join(banner.DOScale(1f, 0.3f).SetEase(Ease.OutBack, 2f))
+                .AppendInterval(banners.Count > 0 ? 1.1f : 1.6f)
+                .Append(bannerGroup.DOFade(0f, 0.2f))
+                .OnComplete(NextBanner);
+        }
+
+        void RefreshGoalLines(RunState run)
+        {
+            if (Time.unscaledTime < nextGoalRefresh) return;
+            nextGoalRefresh = Time.unscaledTime + 0.25f;
+            int left = Mathf.CeilToInt(game.Config.SectorTime(run.sectorsPassed) - run.elapsed);
+            sectorLine.text = Loc.F("sector_line", run.sectorsPassed + 1, UIKit.Clock(left), UIKit.Num(game.Config.SectorBonus(run.sectorsPassed)));
+            var mission = MissionService.Closest();
+            missionLine.text = mission != null ? $"{mission.Title}  <color={Palette.Tag(Palette.Text)}>{mission.Progress}</color>" : "";
         }
 
         protected override void OnShow()
@@ -112,6 +173,8 @@ namespace PlanetDefender
             shownHp = -1;
             SetXp(shownXp);
             LayoutGold();
+            nextGoalRefresh = 0;
+            RefreshGoalLines(run);
         }
 
         void BuildHearts(int max)
@@ -154,6 +217,7 @@ namespace PlanetDefender
                 laserFill.rectTransform.anchorMax = new Vector2(laser, 1);
                 laserFill.color = laser >= 1 ? Palette.Xp.Hdr(1.4f + Mathf.PingPong(Time.unscaledTime * 3f, 0.8f)) : Palette.Xp.WithAlpha(0.7f);
             }
+            RefreshGoalLines(run);
             TrackGoldPointer();
         }
 
@@ -226,12 +290,19 @@ namespace PlanetDefender
                 .OnComplete(() => { hint.gameObject.SetActive(false); hint.anchoredPosition = new Vector2(0, 40); });
         }
 
-        GoldPickup pointed;
-        public void PointAtGold(GoldPickup g)
+        System.Func<Vector2?> pointed;
+        public void PointAtGold(GoldPickup g) =>
+            PointAt(() => g != null && g.alive ? g.position + Vector2.up * (g.radius - 0.4f) : (Vector2?)null, Loc.T("hint_gold"), Palette.Gold);
+
+        public void ClearPointer() { pointed = null; pointer.gameObject.SetActive(false); }
+
+        // A label that follows something in the world until it is gone.
+        public void PointAt(System.Func<Vector2?> target, string text, Color color)
         {
-            pointed = g;
+            pointed = target;
             pointer.gameObject.SetActive(true);
-            pointerText.text = Loc.T("hint_gold");
+            pointerText.text = text;
+            pointerText.color = color;
             pointer.localScale = Vector3.zero;
             pointer.DOKill();
             pointer.DOScale(1f, 0.3f).SetEase(Ease.OutBack).SetUpdate(true);
@@ -240,9 +311,10 @@ namespace PlanetDefender
         void TrackGoldPointer()
         {
             if (!pointer.gameObject.activeSelf) return;
-            if (pointed == null || !pointed.alive) { pointer.gameObject.SetActive(false); pointed = null; return; }
+            var at = pointed?.Invoke();
+            if (at == null) { ClearPointer(); return; }
             var cam = game.Juice.Camera;
-            Vector2 screen = cam.WorldToScreenPoint((Vector3)pointed.position + Vector3.up * (pointed.radius + 0.55f));
+            Vector2 screen = cam.WorldToScreenPoint((Vector3)at.Value + Vector3.up * 0.95f);
             RectTransformUtility.ScreenPointToLocalPointInRectangle((RectTransform)root.parent, screen, cam, out var local);
             // Keep the label on screen even when the gold enters from a side edge.
             var area = ((RectTransform)root.parent).rect;
@@ -253,7 +325,16 @@ namespace PlanetDefender
             pointer.anchoredPosition = local;
         }
 
-        protected override void OnHide() { pointer.gameObject.SetActive(false); hint.gameObject.SetActive(false); }
+        protected override void OnHide()
+        {
+            pointer.gameObject.SetActive(false);
+            hint.gameObject.SetActive(false);
+            banners.Clear();
+            DOTween.Kill(bannerGroup);
+            banner.DOKill();
+            bannerBusy = false;
+            banner.gameObject.SetActive(false);
+        }
     }
 
     // Level-up (design board "Level-up"): gameplay is frozen; three cards, at most one purchase, Skip always works.
@@ -264,7 +345,7 @@ namespace PlanetDefender
         readonly UIKit.ButtonParts skip;
         public UnityEngine.UI.Button SkipButton => skip.button;
         readonly List<(RectTransform card, UIKit.ButtonParts buy, UpgradeOffer offer, Image border)> rows = new List<(RectTransform, UIKit.ButtonParts, UpgradeOffer, Image)>();
-        bool locked;
+        bool locked, adOffered;
 
         public LevelUpScreen(Transform parent, GameManager game) : base(parent, "LevelUp", game, true, 0.92f)
         {
@@ -294,9 +375,16 @@ namespace PlanetDefender
         public void Open(RunState run, List<UpgradeOffer> offers)
         {
             locked = false;
+            adOffered = false;
             Show();
             level.text = run.level.ToString();
-            gold.text = UIKit.Num(run.sessionGold) + "  <size=13><color=#93A3CF>" + Loc.T("session_gold") + "</color></size>";
+            bool gift = offers.Count > 0 && offers.TrueForAll(o => o.price == 0);
+            gold.text = gift ? $"<size=13><color={Palette.Tag(Palette.Buy)}>{Loc.T("first_free")}</color></size>"
+                : UIKit.Num(run.sessionGold) + "  <size=13><color=#93A3CF>" + Loc.T("session_gold") + "</color></size>";
+            gold.transform.parent.GetChild(0).gameObject.SetActive(!gift);
+            gold.alignment = gift ? TextAlignmentOptions.Center : TextAlignmentOptions.Left;
+            gold.textWrappingMode = TextWrappingModes.NoWrap;
+            gold.rectTransform.Place(gift ? new Vector2(0.5f, 0.5f) : new Vector2(0, 0.5f), gift ? Vector2.zero : new Vector2(40, 0), new Vector2(gift ? 340 : 200, 24));
             for (int i = cards.childCount - 1; i >= 0; i--) Object.Destroy(cards.GetChild(i).gameObject);
             rows.Clear();
             for (int i = 0; i < offers.Count; i++) Card(run, offers[i], i);
@@ -323,12 +411,17 @@ namespace PlanetDefender
             string tier = offer.currentLevel == 0 ? Loc.T("new") : Loc.F("tier", offer.currentLevel, offer.currentLevel + 1);
             var desc = UIKit.Text(card.transform, "Desc", $"{Loc.T("up_" + offer.upgrade.id + "_d")}  <color={Palette.Tag(Palette.Plasma)}>{tier}</color>", 12, Palette.TextDim, TextAlignmentOptions.TopLeft, false);
             desc.rectTransform.Place(new Vector2(0, 1), new Vector2(88, -40), new Vector2(160, 46));
-            var buy = UIKit.Button(card.transform, "Buy", UIKit.Num(offer.price), ButtonStyle.Buy, Palette.Buy, new Vector2(82, 44), null, 14);
+            // One out-of-reach card per level-up can be taken for an ad: the honest alternative to staring at a greyed-out price.
+            bool viaAd = !affordable && !adOffered && game.RewardedAvailable;
+            if (viaAd) adOffered = true;
+            string priceLabel = offer.price == 0 ? Loc.T("free") : viaAd ? Loc.T("ad_free") : UIKit.Num(offer.price);
+            var buy = UIKit.Button(card.transform, "Buy", priceLabel, ButtonStyle.Buy, Palette.Buy, new Vector2(82, 44), null, 14);
             buy.root.Place(new Vector2(1, 0.5f), new Vector2(-14, 2), new Vector2(82, 44));
-            buy.SetCoin(true);
-            buy.SetInteractable(affordable);
+            buy.SetCoin(offer.price > 0 && !viaAd);
+            buy.SetInteractable(affordable || viaAd);
             var rt = card.rectTransform;
-            buy.button.onClick.AddListener(() => OnBuy(offer, rt, buy));
+            if (viaAd) buy.button.onClick.AddListener(() => OnBuyWithAd(offer, rt, buy));
+            else buy.button.onClick.AddListener(() => OnBuy(offer, rt, buy));
             rows.Add((rt, buy, offer, border));
             // Cards slide up one after another; layout owns the position, so animate a child-safe offset via scale + fade.
             var cg = card.gameObject.AddComponent<CanvasGroup>();
@@ -347,6 +440,28 @@ namespace PlanetDefender
         {
             if (locked) return;
             if (!game.BuyUpgrade(offer)) { buy.juice.Deny(); AudioService.Instance?.Play(Sfx.Denied); return; }
+            Taken(card);
+        }
+
+        void OnBuyWithAd(UpgradeOffer offer, RectTransform card, UIKit.ButtonParts buy)
+        {
+            if (locked) return;
+            locked = true;
+            buy.SetInteractable(false);
+            skip.SetInteractable(false);
+            game.WatchUpgradeAd(offer, granted =>
+            {
+                skip.SetInteractable(true);
+                if (granted) { Taken(card); return; }
+                locked = false;
+                buy.SetLabel(Loc.T("ad_retry"));
+                buy.SetInteractable(true);
+                AudioService.Instance?.Play(Sfx.Denied);
+            });
+        }
+
+        void Taken(RectTransform card)
+        {
             locked = true;
             foreach (var row in rows)
             {
@@ -387,6 +502,7 @@ namespace PlanetDefender
     {
         readonly UIKit.ButtonParts watch, end;
         readonly RectTransform box;
+        readonly TextMeshProUGUI status;
         public ReviveScreen(Transform parent, GameManager game) : base(parent, "Revive", game, true, 0.85f)
         {
             box = UIKit.Rect(column, "Box");
@@ -402,43 +518,62 @@ namespace PlanetDefender
             watch.root.Place(new Vector2(0.5f, 0), new Vector2(0, 70), new Vector2(342, 62));
             end = UIKit.Button(box, "End", Loc.T("no_thanks"), ButtonStyle.Outline, Palette.TextDim, new Vector2(342, 50), game.DeclineRevive);
             end.root.Place(new Vector2(0.5f, 0), new Vector2(0, 0), new Vector2(342, 50));
+            status = UIKit.Text(box, "Status", "", 12, Palette.Gold, TextAlignmentOptions.Center, false);
+            status.rectTransform.Place(new Vector2(0.5f, 0), new Vector2(0, 136), new Vector2(342, 20));
         }
-        protected override void OnShow() { In(box, 0.05f, 50, 0.8f); watch.juice.transform.DOScale(1.04f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetDelay(0.5f); }
+        protected override void OnShow() { status.text = ""; In(box, 0.05f, 50, 0.8f); watch.juice.transform.DOScale(1.04f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetDelay(0.5f); }
         protected override void OnHide() { watch.juice.transform.DOKill(); watch.juice.transform.localScale = Vector3.one; }
-        public void SetBusy(bool busy) { watch.SetInteractable(!busy); end.SetInteractable(!busy); }
+        public void SetBusy(bool busy)
+        {
+            watch.SetInteractable(!busy); end.SetInteractable(!busy);
+            status.text = busy ? Loc.T("ad_loading") : "";
+        }
+        public void ShowAdFailed() { status.text = Loc.T("ad_failed"); AudioService.Instance?.Play(Sfx.Denied); }
     }
 
     // Game over (design board "Game over"): score count-up, new-best badge, run stats, banked gold.
     public sealed class GameOverScreen : UIScreen
     {
-        readonly TextMeshProUGUI score, kills, level, earned, spent, banked;
-        readonly RectTransform title, badge, stats, bankBox, buttons;
-        readonly UIKit.ButtonParts ranking, planets;
+        readonly TextMeshProUGUI score, kills, level, earned, spent, banked, runLine;
+        readonly RectTransform title, badge, stats, bankBox, buttons, goalsBox;
+        readonly UIKit.ButtonParts ranking, planets, doubleGold;
+        readonly GoalsView goals;
+        int bankedShown;
 
         public GameOverScreen(Transform parent, GameManager game) : base(parent, "GameOver", game, true, 0.9f)
         {
             title = UIKit.Text(column, "Title", Loc.T("game_over"), 30, Palette.Danger, TextAlignmentOptions.Center, true, 3).rectTransform;
-            title.Place(new Vector2(0.5f, 1), new Vector2(0, -56), new Vector2(390, 40));
-            score = UIKit.Text(column, "Score", "0", 54, Palette.Text, TextAlignmentOptions.Center, true);
-            score.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -100), new Vector2(390, 64));
+            title.Place(new Vector2(0.5f, 1), new Vector2(0, -30), new Vector2(390, 36));
+            score = UIKit.Text(column, "Score", "0", 48, Palette.Text, TextAlignmentOptions.Center, true);
+            score.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -62), new Vector2(390, 54));
+            runLine = UIKit.Text(column, "RunLine", "", 13, Palette.TextDim, TextAlignmentOptions.Center, true, 1);
+            runLine.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -118), new Vector2(370, 20));
+            runLine.enableAutoSizing = true; runLine.fontSizeMin = 10; runLine.fontSizeMax = 13; runLine.textWrappingMode = TextWrappingModes.NoWrap;
             badge = UIKit.Rect(column, "Badge");
-            badge.Place(new Vector2(0.5f, 1), new Vector2(0, -170), new Vector2(130, 28));
+            badge.Place(new Vector2(0.5f, 1), new Vector2(0, -6), new Vector2(120, 24));
             var badgeBg = UIKit.Image(badge, "Bg", UIKit.Assets.pill, Palette.Gold, true); badgeBg.rectTransform.Stretch();
             var badgeText = UIKit.Text(badge, "Text", Loc.T("new_best"), 12, Palette.Void, TextAlignmentOptions.Center, true, 2); badgeText.rectTransform.Stretch();
 
             stats = UIKit.Panel(column, "Stats", Palette.Panel, Palette.Line).rectTransform;
-            stats.Place(new Vector2(0.5f, 1), new Vector2(0, -216), new Vector2(350, 140));
+            stats.Place(new Vector2(0.5f, 1), new Vector2(0, -144), new Vector2(350, 112));
             kills = Stat(stats, Loc.T("meteors_destroyed"), new Vector2(0, 1), Palette.Text);
             level = Stat(stats, Loc.T("reached_level"), new Vector2(1, 1), Palette.Xp);
             earned = Stat(stats, Loc.T("gold_earned"), new Vector2(0, 0), Palette.Gold);
             spent = Stat(stats, Loc.T("gold_spent"), new Vector2(1, 0), Palette.TextDim);
 
             bankBox = UIKit.Panel(column, "Bank", Palette.Deep, Palette.Gold).rectTransform;
-            bankBox.Place(new Vector2(0.5f, 1), new Vector2(0, -372), new Vector2(350, 60));
+            bankBox.Place(new Vector2(0.5f, 1), new Vector2(0, -262), new Vector2(350, 50));
             var bl = UIKit.Text(bankBox, "Label", Loc.T("banked"), 13, Palette.Text, TextAlignmentOptions.Left, true, 2);
             bl.rectTransform.Place(new Vector2(0, 0.5f), new Vector2(18, 0), new Vector2(160, 24));
             banked = UIKit.Text(bankBox, "Value", "+0", 24, Palette.Gold, TextAlignmentOptions.Right, true);
             banked.rectTransform.Place(new Vector2(1, 0.5f), new Vector2(-18, 0), new Vector2(160, 30));
+
+            doubleGold = UIKit.Button(column, "DoubleGold", "", ButtonStyle.Buy, Palette.Buy, new Vector2(350, 46), game.WatchDoubleGold, 15);
+            doubleGold.root.Place(new Vector2(0.5f, 1), new Vector2(0, -318), new Vector2(350, 46));
+
+            goalsBox = UIKit.Panel(column, "Goals", Palette.Panel, Palette.Line).rectTransform;
+            goalsBox.Place(new Vector2(0.5f, 1), new Vector2(0, -372), new Vector2(350, 194));
+            goals = new GoalsView(goalsBox, game, 326);
 
             buttons = UIKit.Rect(column, "Buttons");
             buttons.Place(new Vector2(0.5f, 0), new Vector2(0, 32), new Vector2(350, 136));
@@ -455,7 +590,7 @@ namespace PlanetDefender
             var cell = UIKit.Rect(parent, label);
             cell.anchorMin = new Vector2(corner.x * 0.5f, corner.y * 0.5f);
             cell.anchorMax = new Vector2(corner.x * 0.5f + 0.5f, corner.y * 0.5f + 0.5f);
-            cell.offsetMin = new Vector2(18, 8); cell.offsetMax = new Vector2(-8, -8);
+            cell.offsetMin = new Vector2(18, 4); cell.offsetMax = new Vector2(-8, -6);
             var l = UIKit.Text(cell, "Label", label, 12, Palette.TextDim, TextAlignmentOptions.TopLeft, false);
             l.rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(150, 18));
             var v = UIKit.Text(cell, "Value", "0", 20, color, TextAlignmentOptions.TopLeft, true);
@@ -474,8 +609,22 @@ namespace PlanetDefender
             kills.text = UIKit.Num(run.kills); level.text = run.level.ToString();
             earned.text = UIKit.Num(run.goldEarned); spent.text = UIKit.Num(run.goldSpent);
             banked.text = "+0";
+            bankedShown = settlement.banked;
             badge.gameObject.SetActive(false);
-            In(title, 0f, 30); In(stats, 0.25f); In(bankBox, 0.35f); In(buttons, 0.45f);
+            var data = SaveService.Data;
+            string line = Loc.F("run_line", UIKit.Clock(Mathf.FloorToInt(run.elapsed)), run.sectorsPassed + 1);
+            if (!settlement.newBest && data.bestScore > run.score) line += "  ·  " + Loc.F("to_best", UIKit.Num(data.bestScore - run.score));
+            runLine.text = line;
+            doubleGold.root.gameObject.SetActive(game.DoubleGoldAvailable);
+            doubleGold.SetLabel(Loc.F("double_gold", UIKit.Num(settlement.banked)));
+            doubleGold.SetInteractable(true);
+            goals.Refresh();
+            bool canBuy = EconomyService.NextPlanet(game.Config) is PlanetConfig next && EconomyService.CanBuy(next);
+            planets.juice.transform.DOKill();
+            planets.juice.transform.localScale = Vector3.one;
+            if (canBuy) planets.juice.transform.DOScale(1.06f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true);
+            In(title, 0f, 30); In(stats, 0.25f); In(bankBox, 0.35f); In(goalsBox, 0.4f); In(buttons, 0.45f);
+            if (game.DoubleGoldAvailable) In(doubleGold.root, 0.55f);
             title.DOKill(true);
             var seq = DOTween.Sequence().SetUpdate(true);
             seq.AppendInterval(0.15f);
@@ -501,6 +650,197 @@ namespace PlanetDefender
             });
         }
 
-        protected override void OnHide() { badge.DOKill(); badge.localRotation = Quaternion.identity; }
+        public void SetDoubleBusy(bool busy)
+        {
+            doubleGold.SetInteractable(!busy);
+            if (busy) doubleGold.SetLabel(Loc.T("ad_loading"));
+        }
+
+        public void ShowAdFailed()
+        {
+            doubleGold.SetLabel(Loc.T("ad_retry"));
+            AudioService.Instance?.Play(Sfx.Denied);
+        }
+
+        public void ShowDoubled(int amount)
+        {
+            doubleGold.root.gameObject.SetActive(false);
+            int from = bankedShown;
+            bankedShown += amount;
+            UIKit.Count(banked, from, bankedShown, 0.5f, v => "+" + UIKit.Num(v));
+            bankBox.DOPunchScale(Vector3.one * 0.08f, 0.35f, 6, 0.6f).SetUpdate(true);
+            goals.Refresh();
+            game.Juice.BloomPulse(1f, 0.6f);
+        }
+
+        protected override void OnHide()
+        {
+            badge.DOKill(); badge.localRotation = Quaternion.identity;
+            planets.juice.transform.DOKill(); planets.juice.transform.localScale = Vector3.one;
+        }
+    }
+
+    // What the player is working towards: the next planet and the three missions. Lives on the results screen and in the Goals card.
+    public sealed class GoalsView
+    {
+        readonly GameManager game;
+        readonly TextMeshProUGUI planetText, header;
+        readonly Image planetFill;
+        readonly (RectTransform root, TextMeshProUGUI title, TextMeshProUGUI progress, TextMeshProUGUI reward, Image fill)[] rows;
+
+        public GoalsView(RectTransform parent, GameManager game, float width)
+        {
+            this.game = game;
+            var box = UIKit.Rect(parent, "View");
+            box.Place(new Vector2(0.5f, 1), new Vector2(0, -10), new Vector2(width, 176));
+            planetText = UIKit.Text(box, "Planet", "", 13, Palette.Gold, TextAlignmentOptions.Left, true, 1);
+            planetText.rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(width, 18));
+            planetText.enableAutoSizing = true; planetText.fontSizeMin = 10; planetText.fontSizeMax = 13; planetText.textWrappingMode = TextWrappingModes.NoWrap;
+            planetFill = Bar(box, new Vector2(0, -20), width, Palette.Gold);
+            header = UIKit.Text(box, "Header", "", 11, Palette.TextDim, TextAlignmentOptions.Left, true, 2);
+            header.rectTransform.Place(new Vector2(0, 1), new Vector2(0, -36), new Vector2(width, 16));
+            rows = new (RectTransform, TextMeshProUGUI, TextMeshProUGUI, TextMeshProUGUI, Image)[3];
+            for (int i = 0; i < rows.Length; i++)
+            {
+                var row = UIKit.Rect(box, "Row" + i);
+                row.Place(new Vector2(0, 1), new Vector2(0, -54 - i * 41), new Vector2(width, 38));
+                var title = UIKit.Text(row, "Title", "", 12, Palette.Text, TextAlignmentOptions.Left, false);
+                title.rectTransform.Place(new Vector2(0, 1), Vector2.zero, new Vector2(width - 112, 18));
+                title.enableAutoSizing = true; title.fontSizeMin = 9; title.fontSizeMax = 12; title.textWrappingMode = TextWrappingModes.NoWrap;
+                var progress = UIKit.Text(row, "Progress", "", 12, Palette.TextDim, TextAlignmentOptions.Right, true);
+                progress.rectTransform.Place(new Vector2(1, 1), new Vector2(-46, 0), new Vector2(64, 18));
+                progress.enableAutoSizing = true; progress.fontSizeMin = 9; progress.fontSizeMax = 12; progress.textWrappingMode = TextWrappingModes.NoWrap;
+                var reward = UIKit.Text(row, "Reward", "", 12, Palette.Gold, TextAlignmentOptions.Right, true);
+                reward.rectTransform.Place(new Vector2(1, 1), Vector2.zero, new Vector2(44, 18));
+                rows[i] = (row, title, progress, reward, Bar(row, new Vector2(0, -21), width, Palette.Plasma));
+            }
+        }
+
+        static Image Bar(RectTransform parent, Vector2 position, float width, Color color)
+        {
+            var track = UIKit.Image(parent, "Track", UIKit.Assets.pill, Palette.Deep, true);
+            track.rectTransform.Place(new Vector2(0, 1), position, new Vector2(width, 8));
+            var fill = UIKit.Image(track.transform, "Fill", UIKit.Assets.pill, color, true);
+            fill.rectTransform.anchorMin = Vector2.zero; fill.rectTransform.anchorMax = new Vector2(0, 1);
+            fill.rectTransform.pivot = new Vector2(0, 0.5f);
+            fill.rectTransform.offsetMin = Vector2.zero; fill.rectTransform.offsetMax = Vector2.zero;
+            return fill;
+        }
+
+        static void SetFill(Image fill, float fraction)
+        {
+            fill.rectTransform.anchorMax = new Vector2(Mathf.Clamp01(fraction), 1);
+            fill.enabled = fraction > 0.01f;
+        }
+
+        public void Refresh()
+        {
+            var next = EconomyService.NextPlanet(game.Config);
+            int bank = EconomyService.BankGold;
+            if (next == null) { planetText.text = Loc.T("all_planets"); SetFill(planetFill, 1f); }
+            else
+            {
+                string name = Loc.T("planet_" + next.id);
+                bool ready = bank >= next.price;
+                planetText.text = ready ? Loc.F("planet_ready", name) : Loc.F("planet_next", name, UIKit.Num(bank), UIKit.Num(next.price));
+                planetText.color = ready ? Palette.Buy : Palette.Gold;
+                SetFill(planetFill, (float)bank / Mathf.Max(1, next.price));
+            }
+            int done = MissionService.CompletedThisRun;
+            header.text = done > 0 ? $"{Loc.T("missions")}  ·  <color={Palette.Tag(Palette.Gold)}>{Loc.F("missions_done", done, UIKit.Num(MissionService.RewardThisRun))}</color>" : Loc.T("missions");
+            var active = MissionService.Active();
+            for (int i = 0; i < rows.Length; i++)
+            {
+                bool on = i < active.Count;
+                rows[i].root.gameObject.SetActive(on);
+                if (!on) continue;
+                rows[i].title.text = active[i].Title;
+                rows[i].progress.text = active[i].Progress;
+                rows[i].reward.text = "+" + UIKit.Num(active[i].reward);
+                SetFill(rows[i].fill, active[i].Fraction);
+            }
+        }
+    }
+
+    public sealed class GoalsScreen : UIScreen
+    {
+        readonly RectTransform card;
+        readonly GoalsView view;
+        public GoalsScreen(Transform parent, GameManager game) : base(parent, "GoalsCard", game, true, 0.94f)
+        {
+            card = Modal(column, 340);
+            var title = UIKit.Text(card, "Title", Loc.T("goals"), 24, Palette.Text, TextAlignmentOptions.Center, true, 4);
+            title.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -22), new Vector2(320, 36));
+            var holder = UIKit.Rect(card, "Holder");
+            holder.Place(new Vector2(0.5f, 1), new Vector2(0, -60), new Vector2(322, 190));
+            view = new GoalsView(holder, game, 310);
+            var back = UIKit.Button(card, "Back", Loc.T("back"), ButtonStyle.Ghost, Palette.TextDim, new Vector2(302, 52), () => Hide());
+            back.root.Place(new Vector2(0.5f, 0), new Vector2(0, 18), new Vector2(302, 52));
+        }
+        protected override void OnShow() { view.Refresh(); In(card, 0f, 40, 0.9f); }
+    }
+
+    // Daily reward: claim is one tap, an ad doubles it, and tomorrow's bigger amount is the reason to come back.
+    public sealed class DailyScreen : UIScreen
+    {
+        readonly RectTransform card;
+        readonly TextMeshProUGUI day, amount, tomorrow;
+        readonly UIKit.ButtonParts claim, watch;
+        readonly List<(Image bg, TextMeshProUGUI text)> cells = new List<(Image, TextMeshProUGUI)>();
+
+        public DailyScreen(Transform parent, GameManager game) : base(parent, "Daily", game, true, 0.94f)
+        {
+            card = Modal(column, 374);
+            var title = UIKit.Text(card, "Title", Loc.T("daily_title"), 24, Palette.Text, TextAlignmentOptions.Center, true, 3);
+            title.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -22), new Vector2(330, 34));
+            title.enableAutoSizing = true; title.fontSizeMin = 16; title.fontSizeMax = 24; title.textWrappingMode = TextWrappingModes.NoWrap;
+            day = UIKit.Text(card, "Day", "", 14, Palette.Plasma, TextAlignmentOptions.Center, true, 2);
+            day.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -58), new Vector2(330, 22));
+            amount = UIKit.Text(card, "Amount", "", 46, Palette.Gold, TextAlignmentOptions.Center, true);
+            amount.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -84), new Vector2(330, 56));
+            var strip = UIKit.Rect(card, "Strip");
+            strip.Place(new Vector2(0.5f, 1), new Vector2(0, -148), new Vector2(322, 42));
+            for (int i = 0; i < 7; i++)
+            {
+                var bg = UIKit.Image(strip, "Cell" + i, UIKit.Assets.panel, Palette.Panel, true);
+                bg.rectTransform.Place(new Vector2(0, 0.5f), new Vector2(i * 46.5f, 0), new Vector2(43, 42));
+                var text = UIKit.Text(bg.transform, "Text", "", 11, Palette.TextDim, TextAlignmentOptions.Center, true);
+                text.rectTransform.Stretch(2, 2, 0, 0);
+                text.enableAutoSizing = true; text.fontSizeMin = 8; text.fontSizeMax = 12; text.textWrappingMode = TextWrappingModes.NoWrap;
+                cells.Add((bg, text));
+            }
+            tomorrow = UIKit.Text(card, "Tomorrow", "", 13, Palette.TextDim, TextAlignmentOptions.Center, false);
+            tomorrow.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -196), new Vector2(330, 22));
+            watch = UIKit.Button(card, "Watch", Loc.T("daily_double"), ButtonStyle.Buy, Palette.Buy, new Vector2(302, 58), game.WatchDailyDouble, 17);
+            watch.root.Place(new Vector2(0.5f, 0), new Vector2(0, 84), new Vector2(302, 58));
+            claim = UIKit.Button(card, "Claim", Loc.T("daily_claim"), ButtonStyle.Outline, Palette.Plasma, new Vector2(302, 52), game.ClaimDaily);
+            claim.root.Place(new Vector2(0.5f, 0), new Vector2(0, 20), new Vector2(302, 52));
+        }
+
+        public UnityEngine.UI.Button ClaimButton => claim.button;
+
+        protected override void OnShow()
+        {
+            int streak = DailyService.NextStreak;
+            int position = (streak - 1) % 7;
+            day.text = Loc.F("daily_day", streak);
+            amount.text = "+" + UIKit.Num(DailyService.Reward(game.Config, streak));
+            tomorrow.text = Loc.F("daily_next", UIKit.Num(DailyService.Reward(game.Config, streak + 1)));
+            for (int i = 0; i < cells.Count; i++)
+            {
+                cells[i].text.text = UIKit.Num(game.Config.daily.rewards[i % game.Config.daily.rewards.Length]);
+                cells[i].bg.color = i == position ? Palette.Gold : i < position ? Palette.Deep : Palette.Panel;
+                cells[i].text.color = i == position ? Palette.Void : i < position ? Palette.Line : Palette.TextDim;
+            }
+            watch.root.gameObject.SetActive(game.RewardedAvailable);
+            watch.SetLabel(Loc.T("daily_double"));
+            In(card, 0f, 40, 0.9f);
+        }
+
+        public void ShowAdFailed()
+        {
+            watch.SetLabel(Loc.T("ad_retry"));
+            AudioService.Instance?.Play(Sfx.Denied);
+        }
     }
 }

@@ -14,7 +14,7 @@ namespace PlanetDefender
     // afford. At most one purchase per level-up; Skip always works.
     public static class UpgradeShop
     {
-        public static List<UpgradeOffer> Roll(GameConfig config, RunState run, System.Random rng, int count = 3)
+        public static List<UpgradeOffer> Roll(GameConfig config, RunState run, System.Random rng, int count = 3, bool free = false)
         {
             var pool = new List<UpgradeOffer>();
             for (int i = 0; i < config.upgrades.Length; i++)
@@ -33,6 +33,7 @@ namespace PlanetDefender
                 if (cheap != null) picked[picked.Count - 1] = cheap;
             }
             picked.Sort((a, b) => a.price.CompareTo(b.price));
+            if (free) foreach (var o in picked) o.price = 0;   // first-run gift: the first reward must never be out of reach
             return picked;
         }
 

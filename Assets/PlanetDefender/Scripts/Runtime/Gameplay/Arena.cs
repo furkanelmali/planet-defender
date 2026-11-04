@@ -43,6 +43,12 @@ namespace PlanetDefender
         bool mousePressStartedOnUi;
 
         public bool InputEnabled { get; set; }
+        // First run only: until this much run time has passed the last life cannot be lost and shots pass through gold.
+        public float AssistUntil { get; set; }
+        bool AssistActive => Run != null && Run.elapsed < AssistUntil;
+        Meteor introMeteor;
+        SpriteRenderer introMarker;
+        bool autoFire;
         public int ShotsFired { get; private set; }
         public bool ShieldUp => shieldUp;
         public float LaserReady => Stats == null || Stats.laserCooldown <= 0 ? -1 : Mathf.Clamp01(laserCharge / Stats.laserCooldown);
@@ -71,6 +77,9 @@ namespace PlanetDefender
             reticle.color = Palette.Plasma;
             reticle.transform.localScale = Vector3.one * 0.55f;
             reticle.gameObject.SetActive(false);
+            introMarker = MakeSprite(transform, "IntroMarker", assets.crosshair, assets.reticle, 29);
+            introMarker.color = Palette.Gold;
+            introMarker.gameObject.SetActive(false);
             laser = MakeSprite(transform, "Laser", assets.quad, assets.laser, 14);
             laser.gameObject.SetActive(false);
             Shader.SetGlobalVector(PlanetPosId, PlanetCenter);
@@ -140,6 +149,7 @@ namespace PlanetDefender
         {
             if (juice != null && juice.Camera != null) Planet.UpdateLod(juice.Camera);
             ReadInput();
+            UpdateIntroMarker();
         }
 
         // Automated checks drive the blaster without a pointer.
@@ -167,8 +177,10 @@ namespace PlanetDefender
             else
             {
                 screen = Input.mousePosition;
+                // Holding a mouse button for a whole run is tiring: Space latches the blaster on and off.
+                if (Input.GetKeyDown(KeyCode.Space)) autoFire = !autoFire;
                 if (Input.GetMouseButtonDown(0)) mousePressStartedOnUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-                down = Input.GetMouseButton(0) && !mousePressStartedOnUi;
+                down = (Input.GetMouseButton(0) && !mousePressStartedOnUi) || autoFire;
             }
             Vector2 world = cam.ScreenToWorldPoint(screen);
             Vector2 dir = world - PlanetCenter;
@@ -329,7 +341,7 @@ namespace PlanetDefender
                     Damage(m, b.damage, 0);
                     if (b.pierceLeft-- <= 0) consumed = true;
                 }
-                if (!consumed && !b.meteorOnly)
+                if (!consumed && !b.meteorOnly && !AssistActive)
                 {
                     for (int j = golds.Count - 1; j >= 0 && !consumed; j--)
                     {
@@ -489,6 +501,16 @@ namespace PlanetDefender
                 Planet.SetShield(false, Palette.Gold);
                 vfx.Play(assets.shieldBreak, PlanetCenter, Planet.Radius, Palette.Gold);
                 vfx.Text(contact, Loc.T("shield_block"), Palette.Gold, 4f);
+                AudioService.Instance?.Play(Sfx.ShieldBlock);
+                juice.Shake(0.15f, 0.25f);
+                return;
+            }
+            if (Run.hp <= 1 && AssistActive)
+            {
+                // A new player keeps playing through the opening: the hit still reads, the planet survives.
+                Run.BreakCombo();
+                vfx.Play(assets.shieldBreak, contact, 0.6f, Palette.Plasma);
+                vfx.Text(contact, Loc.T("shield_block"), Palette.Plasma, 4f);
                 AudioService.Instance?.Play(Sfx.ShieldBlock);
                 juice.Shake(0.15f, 0.25f);
                 return;
@@ -713,6 +735,33 @@ namespace PlanetDefender
             foreach (var m in meteors) { m.flash = 0; m.visual.DOKill(true); m.visual.localScale = Vector3.one; m.Apply(); }
         }
 
+        // The first meteor of a new player's first run: placed in view and marked, so the first action has a clear target.
+        public void SpawnIntroMeteor()
+        {
+            SpawnMeteor(config.Meteor("normal"), PlanetCenter + new Vector2(1.5f, 3.9f), null);
+            introMeteor = meteors[meteors.Count - 1];
+            introMarker.gameObject.SetActive(true);
+        }
+
+        public Vector2? IntroMeteorPosition => introMeteor != null && introMeteor.alive ? introMeteor.position : (Vector2?)null;
+
+        public void ClearIntroMeteor()
+        {
+            introMeteor = null;
+            introMarker.gameObject.SetActive(false);
+        }
+
+        void UpdateIntroMarker()
+        {
+            if (introMeteor == null) return;
+            if (!introMeteor.alive) { ClearIntroMeteor(); return; }
+            introMarker.transform.position = introMeteor.position;
+            introMarker.transform.localScale = Vector3.one * (1.1f + Mathf.PingPong(Time.unscaledTime * 0.9f, 0.3f));
+        }
+
+        // A sector event: one heavy meteor from the edge, regardless of the normal unlock schedule.
+        public void SpawnSectorMeteor() => SpawnMeteor(config.Meteor("big"), director.EdgePoint(ViewRect(), config.spawn.edgeMargin), null);
+
         public void DebugSpawn(string type, Vector2 position) => SpawnMeteor(config.Meteor(type), position, null);
         public void DebugSpawnGold(Vector2 position)
         {
@@ -728,6 +777,9 @@ namespace PlanetDefender
             Run = null;
             Stats = null;
             Firing = false;
+            AssistUntil = 0;
+            autoFire = false;
+            ClearIntroMeteor();
             InputEnabled = false;
             reticle.gameObject.SetActive(false);
             laser.gameObject.SetActive(false);

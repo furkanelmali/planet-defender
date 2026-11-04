@@ -21,7 +21,8 @@ namespace PlanetDefender.EditorTools
         static double next, deadline;
         static GameManager game;
         static string dir;
-        static int savedBank;
+        static int savedBank, savedKills, savedGold, savedReward;
+        static string savedMission;
         static readonly Dictionary<string, Vector2> menuHomes = new Dictionary<string, Vector2>();
 
         // Pending contact sheet: one capture per size, a little wall time between sizes so layout settles.
@@ -106,12 +107,13 @@ namespace PlanetDefender.EditorTools
         static void Tick()
         {
             if (!SessionState.GetBool(Key, false) || !EditorApplication.isPlaying) return;
-            if (deadline <= 0) deadline = EditorApplication.timeSinceStartup + 900;
-            if (EditorApplication.timeSinceStartup > deadline) { Debug.LogError("PD_CHECK_FAIL: smoke timed out at step " + step); Finish(1); return; }
+            if (deadline <= 0) deadline = EditorApplication.timeSinceStartup + 600;
+            if (EditorApplication.timeSinceStartup > deadline) { Debug.LogError($"PD_CHECK_FAIL: smoke timed out at step {step} state={(game != null ? game.State.ToString() : "none")} elapsed={(game != null && game.Run != null ? game.Run.elapsed : -1)} timeScale={Time.timeScale} frame={Time.frameCount}"); Finish(1); return; }
             if (EditorApplication.timeSinceStartup < next) return;
             try
             {
-                if (game != null && game.Run != null) game.Run.hp = Mathf.Max(game.Run.hp, step < 22 ? game.Run.maxHp : game.Run.hp);
+                if (game != null && game.Run != null && step < 22) game.Run.hp = game.Run.maxHp;
+                else if (game != null && game.Run != null && step >= 100 && step <= 116 && step != 102 && step != 103) game.Run.hp = game.Run.maxHp;
                 if (sheetName != null) { TickSheet(); return; }
                 Step();
             }
@@ -159,19 +161,128 @@ namespace PlanetDefender.EditorTools
             {
                 case 0:
                     game = UnityEngine.Object.FindAnyObjectByType<GameManager>();
-                    if (game == null || game.State != GameState.Menu) { Wait(0.2); return; }
+                    if (game == null || game.State == GameState.Boot) { Wait(0.2); return; }
                     dir = Environment.GetEnvironmentVariable("PD_CAPTURE_DIR");
                     if (string.IsNullOrEmpty(dir)) dir = Path.GetFullPath("Logs/Captures");
                     Directory.CreateDirectory(dir);
                     PlaygamaBridgeAdapter.SkipAdsForTests = true;
+                    Application.runInBackground = true;   // a batch editor losing window focus must not stop the player loop
                     SetSize(Sizes[0]);
+                    // First launch: straight into a run, nothing moves until the first press, and the first meteor is marked.
+                    Check(game.State == GameState.Running && !game.UI.Menu.Visible, "first launch opens in the game, not the menu");
+                    Check(game.FirstRun && game.AwaitingFirstPress && game.Arena.AliveMeteors == 1 && game.Arena.IntroMeteorPosition.HasValue, "first run waits for the first press with a marked meteor");
+                    Check(!PlaygamaBridgeAdapter.InterstitialDue(30f, 0f, -1f, 45f, 60f), "no interstitial before the first-ad floor");
+                    Check(PlaygamaBridgeAdapter.InterstitialDue(50f, 0f, -1f, 45f, 60f), "interstitial allowed after the first-ad floor");
+                    Check(!PlaygamaBridgeAdapter.InterstitialDue(100f, 0f, 50f, 45f, 60f) && PlaygamaBridgeAdapter.InterstitialDue(111f, 0f, 50f, 45f, 60f), "interstitial cooldown is respected");
+                    Check(game.Config.SectorTime(0) == 30f && game.Config.SectorTime(1) == 60f && game.Config.SectorTime(2) == 120f, "sector schedule 30 s, then every minute");
+                    Check(game.Config.ThreatAt(1) == "fast" && game.Config.ThreatAt(4) == "big" && game.Config.ThreatAt(5) == null, "sector threats follow the meteor unlocks");
+                    Check(MissionService.Active().Count == 3, "three missions active on a new save");
+                    step = 100; Wait(2.0); return;
+                case 100:
+                    // game_ready waits for WaitForEndOfFrame, which never fires in batch mode: it is measured in the WebGL build instead.
+                    Check(Mathf.Approximately(game.Run.elapsed, 0f) && game.AwaitingFirstPress, "run time stands still before the first press");
+                    Sheet("00a_first_launch"); step++; return;
+                case 101:
+                    game.Arena.DebugAim = (game.Arena.IntroMeteorPosition.Value - Arena.PlanetCenter).normalized;
+                    step++; Wait(0.5); return;
+                case 102:
+                    if (game.AwaitingFirstPress || game.Run.kills == 0) { if (game.Run.elapsed > 20f) throw new Exception("PD_CHECK_FAIL: intro meteor was not shot"); Wait(0.2); return; }
+                    Check(game.Run.elapsed > 0f && !game.Arena.IntroMeteorPosition.HasValue, "first press starts the run and the intro meteor can be shot");
+                    game.Arena.DebugAim = null;
+                    // First-run assist: the last life survives a hit while the assist window is open.
+                    game.Run.hp = 1;
+                    savedKills = game.Run.kills;
+                    game.Arena.DebugSpawn("normal", (Vector2)Arena.PlanetCenter + new Vector2(0, 1.9f));
+                    step++; Wait(1.0); return;
+                case 103:
+                    if (game.Run.elapsed < 4f) { Wait(0.2); return; }
+                    Check(game.State == GameState.Running && game.Run.hp == 1, "first-run assist keeps the last life");
+                    game.Run.hp = game.Run.maxHp;
+                    game.Run.xp = game.Run.XpNeeded;
+                    step++; Wait(0.5); return;
+                case 104:
+                    if (game.State != GameState.LevelUp || game.Offers == null || !game.UI.LevelUp.Visible) { Wait(0.2); return; }
+                    if (sub++ < 5) { Wait(0.3); return; }
+                    sub = 0;
+                    Check(game.Offers.Count == 3 && game.Offers.TrueForAll(o => o.price == 0), "first level-up of a new player is free");
+                    Sheet("00b_first_levelup"); step++; return;
+                case 105:
+                {
+                    var gift = game.Offers[0];
+                    int goldBefore = game.Run.sessionGold;
+                    Check(game.BuyUpgrade(gift) && game.Run.sessionGold == goldBefore, "the free upgrade costs nothing");
+                    game.CloseLevelUp();
+                    step++; Wait(1.0); return;
+                }
+                case 106:
+                {
+                    Check(game.State == GameState.Running, "run resumes after the free upgrade");
+                    // Sector milestone: time jumps to the first one; bonus paid once, banner up.
+                    savedGold = game.Run.sessionGold;
+                    game.Run.elapsed = 30f;
+                    step++; Wait(0.6); return;
+                }
+                case 107:
+                    if (game.Run.sectorsPassed < 1) { Wait(0.2); return; }
+                    Check(game.Run.sectorsPassed == 1 && game.Run.sessionGold >= savedGold + game.Config.SectorBonus(0), "first sector milestone pays its bonus");
+                    // Mission: finish the first one by hand and watch gold, tier and rotation.
+                    var firstMission = MissionService.Active()[0];
+                    savedGold = game.Run.sessionGold;
+                    savedMission = firstMission.config.id;
+                    firstMission.state.progress = firstMission.target;
+                    savedReward = firstMission.reward;
+                    step++; Wait(0.5); return;
+                case 108:
+                    if (MissionService.CompletedThisRun == 0) { Wait(0.2); return; }
+                    Check(game.Run.sessionGold >= savedGold + savedReward, "a finished mission pays session gold");
+                    Check(!MissionService.Active().Exists(m => m.config.id == savedMission) && MissionService.Active().Count == 3, "a finished mission is replaced from the rotation");
+                    Sheet("00c_goal_banner"); step++; return;
+                case 109:
+                    game.Run.score = 900;
+                    game.Pause();
+                    step++; Wait(1.0); return;
+                case 110:
+                    game.EndRunFromPause();
+                    step++; Wait(2.5); return;
+                case 111:
+                    Check(game.State == GameState.GameOver, "first run can be ended from pause");
+                    Check(SaveService.Data.bestSeconds >= 30, "best survival time is saved");
+                    Check(!game.IsNewPlayer, "a settled run ends the new-player state");
+                    Sheet("00d_first_results"); step++; return;
+                case 112:
+                    game.GameOverToMenu();
+                    step++; Wait(2.0); return;
+                case 113:
+                    Check(game.State == GameState.Menu && game.UI.Daily.Visible && DailyService.Pending, "the daily reward appears on the first menu");
+                    Sheet("00e_daily"); step++; return;
+                case 114:
+                {
+                    int bank = SaveService.Data.bankGold;
+                    Click(game.UI.Daily.ClaimButton);
+                    Check(SaveService.Data.bankGold == bank + game.Config.daily.rewards[0] && !DailyService.Pending && SaveService.Data.dailyStreak == 1, "claiming pays day one once");
+                    Check(DailyService.Claim(game.Config, false) == 0, "the daily reward cannot be claimed twice");
+                    DailyService.DayOffsetForTests = 1;
+                    Check(DailyService.Pending && DailyService.NextStreak == 2 && DailyService.Reward(game.Config, 2) == game.Config.daily.rewards[1], "tomorrow continues the streak");
+                    DailyService.DayOffsetForTests = 3;
+                    Check(DailyService.Pending && DailyService.NextStreak == 1, "a missed day restarts the streak");
+                    DailyService.DayOffsetForTests = 0;
+                    game.OpenGoals();
+                    step++; Wait(1.5); return;
+                }
+                case 115: Sheet("00f_goals"); step++; return;
+                case 116:
+                    game.UI.Goals.Hide(true);
+                    SaveService.Data.bankGold = 0;
+                    SaveService.Data.bestScore = 0;
+                    step = 200; Wait(1.0); return;
+                case 200:
                     Check(Loc.Language == "en", "default language is English");
                     Check(SaveService.Data.unlockedPlanets.Count == 1 && SaveService.Data.selectedPlanet == "earth", "new player owns only Earth");
                     Check(game.Config.Planet("earth").hp == 3, "Earth starts with 3 HP");
                     Check(GameConfig.XpForLevel(1) == 100 && GameConfig.XpForLevel(2) == 145 && GameConfig.XpForLevel(3) == 200 && GameConfig.XpForLevel(4) == 265, "XP curve matches GDD");
                     var rapid = game.Config.Upgrade("rapid_fire");
                     Check(game.Config.UpgradePrice(rapid, 0) == 40 && game.Config.UpgradePrice(rapid, 1) == 66, "upgrade price growth ceil(p*1.65^tier)");
-                    step++; Wait(3.0); return;
+                    step = 1; Wait(3.0); return;
                 case 1:
                     foreach (RectTransform c in MenuColumn()) menuHomes[c.name] = c.anchoredPosition;
                     Sheet("01_menu"); step++; return;
@@ -277,13 +388,103 @@ namespace PlanetDefender.EditorTools
                     sub = 0;
                     Check(game.State == GameState.GameOver, "declining revive ends the run");
                     var last = game.LastRun;
+                    Check(SaveService.Data.dailyStreak == 1, "results keep the daily state");
                     Check(SaveService.Data.bankGold == savedBank + last.sessionGold, "unspent session gold banked");
                     Check(SaveService.Data.lastSettledRunId == last.runId && !SaveService.Data.hasSnapshot, "settlement recorded once, snapshot cleared");
                     var again = EconomyService.Settle(last.runId, last.sessionGold, last.score);
                     Check(!again.applied && SaveService.Data.bankGold == savedBank + last.sessionGold, "second settlement of the same run is ignored");
                     Check(SaveService.Data.bestScore == last.score, "best score saved");
-                    Sheet("09_gameover"); step++; return;
+                    Sheet("09_gameover"); step = 300; return;
                 }
+                case 300:
+                {
+                    // Rewarded placements: nothing without the Rewarded state, the promised reward with it.
+                    int bank = SaveService.Data.bankGold, gain = game.LastSettlement.banked;
+                    Check(game.DoubleGoldAvailable, "x2 gold is offered on the results (banked " + gain + ")");
+                    game.WatchDoubleGold();
+                    Check(SaveService.Data.bankGold == bank && game.DoubleGoldAvailable, "a failed ad pays nothing and x2 gold stays available");
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = true;
+                    game.WatchDoubleGold();
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = false;
+                    Check(SaveService.Data.bankGold == bank + gain && !game.DoubleGoldAvailable, "x2 gold pays once");
+                    DailyService.DayOffsetForTests = 1;
+                    game.GameOverToMenu();
+                    step++; Wait(1.0); return;
+                }
+                case 301:
+                {
+                    Check(game.UI.Daily.Visible, "tomorrow's daily reward appears");
+                    int bank = SaveService.Data.bankGold;
+                    game.WatchDailyDouble();
+                    Check(DailyService.Pending && game.UI.Daily.Visible && SaveService.Data.bankGold == bank, "a failed daily ad pays nothing");
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = true;
+                    game.WatchDailyDouble();
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = false;
+                    Check(SaveService.Data.bankGold == bank + game.Config.daily.rewards[1] * 2 && SaveService.Data.dailyStreak == 2, "the daily ad doubles day two");
+                    DailyService.DayOffsetForTests = 0;
+                    SaveService.Data.dailyDay = DailyService.Today;
+                    game.Play();
+                    run = game.Run;
+                    Check(game.State == GameState.Running && !game.FirstRun && !game.AwaitingFirstPress, "later runs start at once");
+                    run.sessionGold = 0;
+                    run.xp = run.XpNeeded;
+                    step++; Wait(0.5); return;
+                }
+                case 302:
+                    if (game.State != GameState.LevelUp || game.Offers == null) { Wait(0.2); return; }
+                    if (sub++ < 4) { Wait(0.3); return; }
+                    sub = 0;
+                    Check(!game.Offers.TrueForAll(o => o.price == 0), "only a new player's first level-up is free");
+                    Sheet("10_levelup_ad"); step++; return;
+                case 303:
+                {
+                    var offer = game.Offers[0];
+                    int tier = run.Level(offer.upgrade.id);
+                    bool? result = null;
+                    game.WatchUpgradeAd(offer, ok => result = ok);
+                    Check(result == false && run.Level(offer.upgrade.id) == tier, "a failed upgrade ad gives nothing");
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = true;
+                    game.WatchUpgradeAd(offer, ok => result = ok);
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = false;
+                    Check(result == true && run.Level(offer.upgrade.id) == tier + 1 && run.sessionGold == 0, "the upgrade ad applies the card for free");
+                    game.CloseLevelUp();
+                    step++; Wait(1.0); return;
+                }
+                case 304:
+                    if (game.State != GameState.Running || Time.timeScale < 0.99f) { Wait(0.3); return; }
+                    run.hp = 1;
+                    game.Arena.DebugSpawn("normal", (Vector2)Arena.PlanetCenter + new Vector2(0, 1.9f));
+                    step++; Wait(1.0); return;
+                case 305:
+                    if (!game.UI.Revive.Visible) { Wait(0.3); return; }
+                    if (sub++ < 4) { Wait(0.3); return; }
+                    sub = 0;
+                    game.WatchRevive();
+                    Check(game.State == GameState.ReviveOffer && game.UI.Revive.Visible && !run.reviveUsed, "a failed revive ad keeps the choice on screen");
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = true;
+                    game.WatchRevive();
+                    PlaygamaBridgeAdapter.GrantRewardedForTests = false;
+                    Check(run.reviveUsed && run.hp == 1 && game.State == GameState.Running, "the revive ad continues the run with one life");
+                    step++; Wait(6.0); return;
+                case 306:
+                    if (game.State != GameState.Running || Time.timeScale < 0.5f) { Wait(0.3); return; }
+                    game.Pause();
+                    step++; Wait(0.8); return;
+                case 307:
+                    game.EndRunFromPause();
+                    step++; Wait(1.0); return;
+                case 308:
+                    Check(game.State == GameState.GameOver, "the revived run ends normally");
+                    game.GameOverToShop();
+                    Check(game.State == GameState.Shop, "results go straight to the shop");
+                    game.BackToMenu();
+                    game.Play();
+                    Check(game.State == GameState.Running, "the moved break never blocks the next run");
+                    game.Pause();
+                    step++; Wait(0.8); return;
+                case 309:
+                    game.EndRunFromPause();
+                    step = 25; Wait(1.0); return;
                 case 25:
                     // Regression: leaving the menu or pressing its buttons mid-entrance used to shift them a little more
                     // on every visit (Play ended up under the Planets/Ranking row on a phone).

@@ -207,6 +207,7 @@ namespace PlanetDefender
         public static Tween Fade(this TMP_Text text, float to, float duration) =>
             DOTween.To(() => text.alpha, v => text.alpha = v, to, duration).SetTarget(text);
 
+        public static string Clock(int seconds) => $"{Mathf.Max(0, seconds) / 60}:{Mathf.Max(0, seconds) % 60:00}";
         public static string Num(int value) => value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
 
         // Counts a TMP number up/down to target (used for score, gold and results).

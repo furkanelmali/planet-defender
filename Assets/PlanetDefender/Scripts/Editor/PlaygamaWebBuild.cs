@@ -13,7 +13,7 @@ namespace PlanetDefender.EditorTools
     // (Bridge Storage is the only save channel), ZIP with index.html at its root.
     public static class PlaygamaWebBuild
     {
-        public const string Version = "1.0";
+        public const string Version = "1.1";
         static string Root => Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Builds", "Playgama"));
         public static string Output => Path.Combine(Root, "WebGL");
         public static string Archive => Path.Combine(Root, $"PlanetDefender_Playgama_v{Version}.zip");

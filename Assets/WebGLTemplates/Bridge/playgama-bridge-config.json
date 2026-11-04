@@ -12,7 +12,10 @@
         "rewarded": {
             "preloadOnStart": true,
             "placements": [
-                { "id": "revive" }
+                { "id": "revive" },
+                { "id": "double_gold" },
+                { "id": "upgrade_free" },
+                { "id": "daily_double" }
             ]
         },
         "useBuiltInErrorPopup": true,

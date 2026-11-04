@@ -11,7 +11,7 @@ namespace PlanetDefender
     {
         readonly RectTransform bankPill, titleBox, info;
         readonly TextMeshProUGUI bank, planetName, best;
-        readonly UIKit.ButtonParts play, continueRun, planets, ranking, settings, language;
+        readonly UIKit.ButtonParts play, continueRun, planets, ranking, settings, language, goals;
         readonly RectTransform grid;
 
         public MenuScreen(Transform parent, GameManager game) : base(parent, "Menu", game)
@@ -34,6 +34,10 @@ namespace PlanetDefender
             b.rectTransform.Place(new Vector2(0.5f, 1), new Vector2(0, -44), new Vector2(390, 46));
             b.fontSizeMax = 40; b.enableAutoSizing = true; b.fontSizeMin = 24;
             a.enableAutoSizing = true; a.fontSizeMin = 24; a.fontSizeMax = 40;
+
+            // The nearest goal, always in sight; tapping it opens the full list.
+            goals = UIKit.Button(column, "Goals", "", ButtonStyle.Outline, Palette.Gold, new Vector2(342, 42), game.OpenGoals, 12);
+            goals.root.Place(new Vector2(0.5f, 1), new Vector2(0, -204), new Vector2(342, 42));
 
             info = UIKit.Rect(column, "Info");
             info.Place(new Vector2(0.5f, 0), new Vector2(0, 196), new Vector2(342, 52));
@@ -65,11 +69,31 @@ namespace PlanetDefender
             return pill.rectTransform;
         }
 
+        // Also called after the daily reward lands on the bank while the menu stays open.
+        public void Refresh()
+        {
+            var data = SaveService.Data;
+            bank.text = UIKit.Num(data.bankGold);
+            var mission = MissionService.Closest();
+            goals.root.gameObject.SetActive(mission != null);
+            if (mission != null) goals.SetLabel($"{mission.Title}   {mission.Progress}   +{UIKit.Num(mission.reward)}");
+            bool canBuy = EconomyService.NextPlanet(game.Config) is PlanetConfig next && EconomyService.CanBuy(next);
+            planets.juice.transform.DOKill();
+            planets.juice.transform.localScale = Vector3.one;
+            if (canBuy) planets.juice.transform.DOScale(1.06f, 0.6f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true);
+        }
+
+        public void CelebrateBank(int amount)
+        {
+            bankPill.DOKill(true);
+            bankPill.DOPunchScale(Vector3.one * 0.25f, 0.4f, 6, 0.6f).SetUpdate(true);
+        }
+
         protected override void OnShow()
         {
             var data = SaveService.Data;
             var planet = game.Config.Planet(data.selectedPlanet);
-            bank.text = UIKit.Num(data.bankGold);
+            Refresh();
             planetName.text = $"{Loc.T("planet_" + planet.id)}  ·  {Loc.F("lives", planet.hp)}";
             best.text = $"{Loc.T("best")}  <color={Palette.Tag(Palette.Text)}>{UIKit.Num(data.bestScore)}</color>";
             bool canContinue = game.HasResumableRun;
@@ -80,7 +104,7 @@ namespace PlanetDefender
             ranking.root.Place(new Vector2(1, 0.5f), Vector2.zero, new Vector2(165, 52));
 
             In(titleBox, 0.05f, 30); In(bankPill, 0f, 10); In(settings.root, 0.02f, 10); In(language.root, 0.04f, 10);
-            In(info, 0.12f); In(play.root, 0.16f); In(grid, 0.22f);
+            In(goals.root, 0.08f, 20); In(info, 0.12f); In(play.root, 0.16f); In(grid, 0.22f);
             if (canContinue) In(continueRun.root, 0.2f);
             // Idle float runs on the title's children so it never fights the entrance tween on the box itself.
             foreach (RectTransform child in titleBox)
@@ -94,7 +118,12 @@ namespace PlanetDefender
             play.juice.transform.DOScale(1.035f, 0.9f).SetEase(Ease.InOutSine).SetLoops(-1, LoopType.Yoyo).SetUpdate(true).SetDelay(0.8f);
         }
 
-        protected override void OnHide() { foreach (RectTransform child in titleBox) child.DOKill(); play.juice.transform.DOKill(); play.juice.transform.localScale = Vector3.one; }
+        protected override void OnHide()
+        {
+            foreach (RectTransform child in titleBox) child.DOKill();
+            play.juice.transform.DOKill(); play.juice.transform.localScale = Vector3.one;
+            planets.juice.transform.DOKill(); planets.juice.transform.localScale = Vector3.one;
+        }
     }
 
     // Planet Shop (GDD §4): browse the eight planets in the world view, buy with Bank Gold or select.
